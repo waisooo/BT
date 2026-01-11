@@ -1,26 +1,23 @@
 package main
 
 import (
-	bencode "bittorrent/decode"
+	torrent "bittorrent/torrent"
 	"fmt"
-	"os"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Missing parameter: please provide a file name!")
-		return
-	}
+	torrentFilePath := "sample.torrent"
 
-	filePath := os.Args[1]
-
-	data, err := os.ReadFile(filePath)
+	torrentFile, err := torrent.ExtractTorrentInfo(torrentFilePath)
 	if err != nil {
-		fmt.Println("Error reading file:", err)
-		return
+		panic(err)
 	}
 
-	val, index, err := bencode.Decode(data)
+	torrent.CalculatePiecesHash(torrentFile)
 
-	fmt.Println(val, index, err)
+	fmt.Printf("Info Hash: %x\n", torrentFile.InfoHash)
+	for i, pieceHash := range torrentFile.PiecesHash {
+		fmt.Printf("Piece %d Hash: %x\n", i, pieceHash)
+	}
+
 }
