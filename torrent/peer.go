@@ -2,6 +2,7 @@ package torrent
 
 import (
 	bencode "bittorrent/decode"
+	"crypto/rand"
 	"encoding/binary"
 	"io"
 	"net"
@@ -10,14 +11,51 @@ import (
 	"strconv"
 )
 
+// Meessage ids for peer communication
+var Choke = 0
+var Unchoke = 1
+var Interested = 2
+var NotInterested = 3
+var Have = 4
+var Bitfield = 5
+var Request = 6
+var Piece = 7
+var Cancel = 8
+
 type Peer struct {
-	complete   int
-	incomplete int
-	interval   int      // How often queries should be re-sent
-	peers      []string // IP address of all peers
+	Complete   int
+	Incomplete int
+	Interval   int      // How often queries should be re-sent
+	Peers      []string // IP address of all peers
 }
 
-func RequestPeers(torrentFile *TorrentFile, peerId [20]byte, port int) Peer {
+func HandShakePeer(conn net.Conn, infoHash [20]byte, peerId [20]byte) ([]byte, error) {
+	// Create handshake message
+	message := make([]byte, 68)
+
+	message[0] = 19                                    // Length of protocol
+	copy(message[1:20], []byte("BitTorrent protocol")) // Protocol identifier
+	copy(message[28:48], infoHash[:])                  // Info hash
+	copy(message[48:68], peerId[:])                    // Peer ID
+
+	// Send initial handshake
+	_, err := conn.Write(message)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read handshake response from peer
+	// It should be in the same format as the sent message
+	response := make([]byte, 68)
+	_, err = conn.Read(response)
+	if err != nil {
+		return nil, err
+	}
+
+	return response, nil
+}
+
+func RequestPeers(torrentFile *TorrentFile, peerId [20]byte, port int) *Peer {
 	trackerURL, err := buildTrackerURL(torrentFile, peerId, port)
 	if err != nil {
 		panic(err)
@@ -33,7 +71,17 @@ func RequestPeers(torrentFile *TorrentFile, peerId [20]byte, port int) Peer {
 	return parsePeersResponse(resp.Body)
 }
 
-func parsePeersResponse(resp io.ReadCloser) Peer {
+func GeneratePeerId() [20]byte {
+	var peerId [20]byte
+	_, err := rand.Read(peerId[:])
+	if err != nil {
+		panic(err)
+	}
+
+	return peerId
+}
+
+func parsePeersResponse(resp io.ReadCloser) *Peer {
 	body, err := io.ReadAll(resp)
 	if err != nil {
 		panic(err)
@@ -57,13 +105,13 @@ func parsePeersResponse(resp io.ReadCloser) Peer {
 	}
 
 	parsedPeers := Peer{
-		complete:   peersMap["complete"].(int),
-		incomplete: peersMap["incomplete"].(int),
-		interval:   peersMap["interval"].(int),
-		peers:      parsedPeerIPs,
+		Complete:   peersMap["complete"].(int),
+		Incomplete: peersMap["incomplete"].(int),
+		Interval:   peersMap["interval"].(int),
+		Peers:      parsedPeerIPs,
 	}
 
-	return parsedPeers
+	return &parsedPeers
 
 }
 

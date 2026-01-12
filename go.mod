@@ -6,6 +6,8 @@ replace bittorrent/decode => ./bencode
 
 replace bittorrent/torrent => ./torrent
 
-require bittorrent/decode v0.0.0-00010101000000-000000000000
+replace bittorrent/peer => ./peer
+
+require bittorrent/decode v0.0.0-00010101000000-000000000000 // indirect
 
 require bittorrent/torrent v0.0.0-00010101000000-000000000000

@@ -2,13 +2,15 @@ package main
 
 import (
 	torrent "bittorrent/torrent"
-	"crypto/rand"
 	"fmt"
+	"net"
 )
 
 func main() {
+	// Path to the torrent file
 	torrentFilePath := "sample.torrent"
 
+	// Parse the torrent file to extract metadata
 	torrentFile, err := torrent.ExtractTorrentInfo(torrentFilePath)
 	if err != nil {
 		panic(err)
@@ -16,22 +18,30 @@ func main() {
 
 	torrent.CalculatePiecesHash(torrentFile)
 
-	fmt.Printf("Info Hash: %x\n", torrentFile.InfoHash)
-	fmt.Printf("Total Pieces: %d\n", len(torrentFile.PiecesHash))
-	fmt.Printf("Total Length %d\n", torrentFile.Info.Length)
-	for i, pieceHash := range torrentFile.PiecesHash {
-		fmt.Printf("Piece %d Hash: %x\n", i, pieceHash)
-	}
-
-	var peerId [20]byte
-
-	_, err = rand.Read(peerId[:])
-	if err != nil {
-		panic(err)
-	}
+	peerId := torrent.GeneratePeerId()
 
 	peers := torrent.RequestPeers(torrentFile, peerId, 6881)
-	fmt.Println(peers)
 
-	// fmt.Println([]byte{peers["peers"]})
+	var conn net.Conn
+	for _, peerIP := range peers.Peers {
+		conn, err = net.Dial("tcp", peerIP)
+
+		if err != nil {
+			fmt.Printf("Failed to connect to peer %s: %v\n", peerIP, err)
+			continue
+		}
+
+		fmt.Printf("Connected to peer %s\n", peerIP)
+
+		_, err = torrent.HandShakePeer(conn, torrentFile.InfoHash, peerId)
+		if err != nil {
+			fmt.Printf("Handshake failed with peer %s: %v\n", peerIP, err)
+			conn.Close()
+			continue
+		}
+
+		conn.Close()
+
+	}
+
 }
