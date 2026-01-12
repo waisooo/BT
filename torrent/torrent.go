@@ -9,17 +9,17 @@ import (
 )
 
 type TorrentFile struct {
-	Announce   string     `bencode:"announce"`
-	InfoHash   [20]byte   `bencode:"sha1,omitempty"`
-	PiecesHash [][20]byte `bencode:"pieces_sha1,omitempty"`
-	Info       InfoDict   `bencode:"info"`
+	Announce   string
+	InfoHash   [20]byte
+	PiecesHash [][20]byte
+	Info       InfoDict
 }
 
 type InfoDict struct {
-	PieceLength int    `bencode:"piece length"`
-	Pieces      string `bencode:"pieces"`
-	Name        string `bencode:"name"`
-	Length      int    `bencode:"length,omitempty"`
+	PieceLength int
+	Pieces      string
+	Name        string
+	Length      int
 }
 
 func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
