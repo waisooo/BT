@@ -4,6 +4,7 @@ import (
 	bencode "bittorrent/decode"
 	"crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -11,22 +12,70 @@ import (
 	"strconv"
 )
 
-// Meessage ids for peer communication
-var Choke = 0
-var Unchoke = 1
-var Interested = 2
-var NotInterested = 3
-var Have = 4
-var Bitfield = 5
-var Request = 6
-var Piece = 7
-var Cancel = 8
+const MaxBlockSize = 16384
 
 type Peer struct {
 	Complete   int
 	Incomplete int
 	Interval   int      // How often queries should be re-sent
 	Peers      []string // IP address of all peers
+}
+
+type PieceProgress struct {
+	Client    *Client
+	Hash      [20]byte
+	Index     int
+	Received  int
+	Total     int
+	Requested int
+	BlockData []byte
+}
+
+func DownloadBlockFromPeer(state *PieceProgress) (*PieceProgress, error) {
+	// Read bitfield message from peer
+	err := ReadMessage(state)
+	if err != nil {
+		return state, err
+	}
+
+	SendInterested(state.Client)
+
+	err = ReadMessage(state)
+	if err != nil {
+		return state, err
+	}
+
+	if state.Client.Choked {
+		SendUnchoke(state.Client)
+	}
+
+	blockSize := MaxBlockSize
+	if state.Total < blockSize {
+		blockSize = state.Total
+	}
+
+	fmt.Println("Piece size is ", state.Total)
+	fmt.Println("Block size is ", blockSize)
+
+	for state.Received < state.Total {
+		if state.Total-state.Received < blockSize {
+			blockSize = state.Total - state.Received
+		}
+
+		// Download all the blocks in the piece
+		SendRequest(state.Client, state.Index, state.Index*blockSize, blockSize)
+
+		err = ReadMessage(state)
+
+		if err != nil {
+			return state, err
+		}
+
+		state.Received += blockSize
+		state.Index++
+	}
+
+	return state, nil
 }
 
 func HandShakePeer(conn net.Conn, infoHash [20]byte, peerId [20]byte) ([]byte, error) {
@@ -79,6 +128,22 @@ func GeneratePeerId() [20]byte {
 	}
 
 	return peerId
+}
+
+///////////////////////////////// Helper Functions /////////////////////////////////
+
+func hasPiece(bf []byte, index int) bool {
+	byteIndex := index / 8
+	bitIndex := index % 8
+
+	return bf[byteIndex]&(1<<(7-bitIndex)) != 0
+}
+
+func setPiece(bf []byte, index int) {
+	byteIndex := index / 8
+	bitIndex := index % 8
+
+	bf[byteIndex] |= 1 << (7 - bitIndex)
 }
 
 func parsePeersResponse(resp io.ReadCloser) *Peer {

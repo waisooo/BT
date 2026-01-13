@@ -68,16 +68,6 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 	return &torrent, nil
 }
 
-func calculateHash(data interface{}) [20]byte {
-	encodedInfo, err := bencode.Encode(data)
-	if err != nil {
-		fmt.Println(err)
-		panic(err)
-	}
-
-	return sha1.Sum(encodedInfo)
-}
-
 func CalculatePiecesHash(torrentFile *TorrentFile) {
 	infoMap := torrentFile.Info
 
@@ -95,4 +85,14 @@ func CalculatePiecesHash(torrentFile *TorrentFile) {
 	}
 
 	torrentFile.PiecesHash = piecesHash
+}
+
+func calculateHash(data interface{}) [20]byte {
+	encodedInfo, err := bencode.Encode(data)
+	if err != nil {
+		fmt.Println(err)
+		panic(err)
+	}
+
+	return sha1.Sum(encodedInfo)
 }
