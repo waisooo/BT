@@ -2,7 +2,7 @@ package torrent
 
 import (
 	"encoding/binary"
-	"fmt"
+	"io"
 	"net"
 )
 
@@ -31,26 +31,26 @@ type Client struct {
 	Choked   bool
 }
 
-func ReadMessage(pieceProgress *PieceProgress) error {
-	msg, err := recieveMessage(pieceProgress.Client.Conn)
+func ReadMessage(state *PieceProgress) error {
+	msg, err := recieveMessage(state.Client.Conn)
 
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("Id is ", msg.Id)
-
 	switch msg.Id {
 	case Choke:
-		pieceProgress.Client.Choked = true
+		state.Client.Choked = true
 	case Unchoke:
-		pieceProgress.Client.Choked = false
+		state.Client.Choked = false
 	case Bitfield:
-		pieceProgress.Client.Bitfield = msg.Payload
+		state.Client.Bitfield = msg.Payload
 	case Piece:
 		// Append the received block to the piece's block data
-		pieceProgress.BlockData = append(pieceProgress.BlockData, msg.Payload[8:]...)
-		setPiece(pieceProgress.Client.Bitfield, pieceProgress.Index)
+		begin := binary.BigEndian.Uint32(msg.Payload[4:8])
+
+		copy(state.BlockData[begin:], msg.Payload[8:])
+		setPiece(state.Client.Bitfield, state.Index)
 	}
 
 	return nil
@@ -91,40 +91,49 @@ func recieveMessage(conn net.Conn) (*Message, error) {
 	}
 
 	// Message length
-	msgLen := binary.BigEndian.Uint32(lengthBuf[0:4])
+	msgLen := binary.BigEndian.Uint32(lengthBuf)
 
-	// Payload
-	payload := make([]byte, msgLen)
-	_, err = conn.Read(payload)
+	// Keep-alive message
+	if msgLen == 0 {
+		return &Message{}, nil
+	}
+
+	// Message ID
+	id := make([]byte, 1)
+	_, err = conn.Read(id)
 	if err != nil {
 		return nil, err
 	}
 
-	peerMsg := Message{}
-	if msgLen > 0 {
-		peerMsg.Id = payload[0]
+	// Payload
+	payload := make([]byte, msgLen-1)
+	_, err = io.ReadFull(conn, payload)
+	if err != nil {
+		return nil, err
 	}
 
-	if msgLen > 1 {
-		peerMsg.Payload = payload[1:]
+	peerMsg := Message{
+		Id:      id[0],
+		Payload: payload,
 	}
 
 	return &peerMsg, nil
 }
 
 func sendMessage(conn net.Conn, msg *Message) {
-	var buf []byte
+	buf := make([]byte, 4)
+
 	if msg == nil {
-		buf = make([]byte, 4)
-	} else {
-		buf = make([]byte, 5+len(msg.Payload))
-		binary.BigEndian.PutUint32(buf[0:4], uint32(1+len(msg.Payload)))
-		buf[4] = msg.Id
-		copy(buf[5:], msg.Payload)
+		binary.BigEndian.PutUint32(buf, 0)
+		conn.Write(buf)
+		return
 	}
 
-	_, err := conn.Write(buf)
-	if err != nil {
-		panic(err)
+	binary.BigEndian.PutUint32(buf, uint32(1+len(msg.Payload)))
+	conn.Write(buf)
+	conn.Write([]byte{msg.Id})
+	if msg.Payload != nil {
+		conn.Write(msg.Payload)
 	}
+
 }

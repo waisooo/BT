@@ -54,7 +54,7 @@ func main() {
 
 	pieceProgress := torrent.PieceProgress{
 		Client:    client,
-		Hash:      torrentFile.PiecesHash[1],
+		Hash:      torrentFile.PiecesHash[0],
 		Index:     0,
 		Received:  0,
 		Total:     torrentFile.Info.PieceLength,
@@ -68,9 +68,8 @@ func main() {
 	}
 
 	if !torrent.ValidatePiece(pieceProgress.BlockData, pieceProgress.Hash) {
-		panic(fmt.Errorf("piece validation failed for piece %d", pieceProgress.Index))
+		fmt.Println("Piece validation failed")
 	}
 
 	conn.Close()
-
 }

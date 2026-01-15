@@ -58,21 +58,22 @@ func DownloadBlockFromPeer(state *PieceProgress) (*PieceProgress, error) {
 	fmt.Println("Block size is ", blockSize)
 
 	for state.Received < state.Total {
-		if state.Total-state.Received < blockSize {
-			blockSize = state.Total - state.Received
+		if !state.Client.Choked {
+			if state.Total-state.Received < blockSize {
+				blockSize = state.Total - state.Received
+			}
+
+			SendRequest(state.Client, state.Index, state.Received, blockSize)
+
+			err = ReadMessage(state)
+
+			if err != nil {
+				return state, err
+			}
+
+			state.Received += blockSize
 		}
 
-		// Download all the blocks in the piece
-		SendRequest(state.Client, state.Index, state.Index*blockSize, blockSize)
-
-		err = ReadMessage(state)
-
-		if err != nil {
-			return state, err
-		}
-
-		state.Received += blockSize
-		state.Index++
 	}
 
 	return state, nil
