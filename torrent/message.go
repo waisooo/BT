@@ -16,7 +16,7 @@ const (
 	Bitfield      = 5
 	Request       = 6
 	Piece         = 7
-	Cancel        = 8
+	cancel        = 8
 )
 
 type Message struct {
@@ -50,7 +50,7 @@ func ReadMessage(state *PieceProgress) error {
 		begin := binary.BigEndian.Uint32(msg.Payload[4:8])
 
 		copy(state.BlockData[begin:], msg.Payload[8:])
-		setPiece(state.Client.Bitfield, state.Index)
+		SetPiece(state.Client.Bitfield, state.Index)
 	}
 
 	return nil

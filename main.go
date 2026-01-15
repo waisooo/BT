@@ -7,6 +7,12 @@ import (
 	"os"
 )
 
+type worker struct {
+	index            int
+	pieceHash        [20]byte
+	downloadAttempts int // Number of download attempts that have been made
+}
+
 func main() {
 	// Path to the torrent file
 	torrentFilePath := "sample.torrent"
@@ -22,54 +28,96 @@ func main() {
 	peerId := torrent.GeneratePeerId()
 	peers := torrent.RequestPeers(torrentFile, peerId, 6881)
 
-	var conn net.Conn
-	// for _, peerIP := range peers.Peers {
-	peerIP := peers.Peers[0]
-	conn, err = net.Dial("tcp", peerIP)
-
-	if err != nil {
-		fmt.Printf("Failed to connect to peer %s: %v\n", peerIP, err)
-		conn.Close()
-		os.Exit(1)
+	// Create a worker queue for all the pieces to be downloaded
+	workerQueue := []worker{}
+	for i := 0; i < len(torrentFile.PiecesHash); i++ {
+		piece := worker{
+			index:            i,
+			pieceHash:        torrentFile.PiecesHash[i],
+			downloadAttempts: 0,
+		}
+		workerQueue = append(workerQueue, piece)
 	}
 
-	fmt.Printf("Connected to peer %s\n", peerIP)
+	peerConnections := []torrent.Client{}
+	for _, peerIP := range peers.Peers {
+		conn, err := net.Dial("tcp", peerIP)
+		if err != nil {
+			fmt.Printf("Failed to connect to peer %s: %v\n", peerIP, err)
+			continue
+		}
 
-	_, err = torrent.HandShakePeer(conn, torrentFile.InfoHash, peerId)
-	if err != nil {
-		fmt.Printf("Handshake failed with peer %s: %v\n", peerIP, err)
-		conn.Close()
-		os.Exit(1)
+		_, err = torrent.HandShakePeer(conn, torrentFile.InfoHash, peerId)
+		if err != nil {
+			fmt.Printf("Handshake failed with peer %s: %v\n", conn.RemoteAddr().String(), err)
+			conn.Close()
+			continue
+		}
 
+		fmt.Printf("Handshake successful with peer %s\n", conn.RemoteAddr().String())
+
+		client := torrent.Client{
+			PeerIP: peerIP,
+			Conn:   conn,
+			Choked: true,
+		}
+
+		peerConnections = append(peerConnections, client)
 	}
 
-	fmt.Printf("Handshake successful with peer %s\n", peerIP)
-	fmt.Println("Pieces length is ", torrentFile.Info.PieceLength)
+	peerIndex := 0
+	fileData := make([]byte, torrentFile.Info.Length)
 
-	client := &torrent.Client{
-		PeerIP: peerIP,
-		Conn:   conn,
-		Choked: true,
+	for len(workerQueue) != 0 {
+		piece := workerQueue[0]
+		workerQueue = workerQueue[1:]
+
+		if piece.downloadAttempts >= 5 {
+			fmt.Printf("Piece %d has failed to download after multiple attempts. Exitting the program\n", piece.index)
+			os.Exit(1)
+		}
+
+		// Choosing peer in round-robin fashion
+		client := peerConnections[peerIndex%len(peerConnections)]
+		peerIndex++
+
+		// Set up piece download state
+		pieceProgress := torrent.ConstructPieceProgress(&client, *torrentFile)
+
+		// Attempt to download the piece
+		_, err = torrent.TryDownloadPiece(pieceProgress)
+		if err != nil {
+			fmt.Printf("Failed to download piece %d from peer %s: %v\n", piece.index, client.PeerIP, err)
+			workerQueue = append(workerQueue, piece)
+			workerQueue[len(workerQueue)-1].downloadAttempts++
+			continue
+		}
+
+		if !torrent.ValidatePiece(pieceProgress.BlockData, pieceProgress.Hash) {
+			fmt.Printf("Piece %d validation failed from peer %s\n", piece.index, client.PeerIP)
+			workerQueue = append(workerQueue, piece)
+			workerQueue[len(workerQueue)-1].downloadAttempts++
+			continue
+		}
+
+		fmt.Printf("Successfully downloaded and validated piece %d from peer %s\n", piece.index, client.PeerIP)
+		copy(fileData[piece.index*torrentFile.Info.PieceLength:], pieceProgress.BlockData)
 	}
 
-	pieceProgress := torrent.PieceProgress{
-		Client:    client,
-		Hash:      torrentFile.PiecesHash[0],
-		Index:     0,
-		Received:  0,
-		Total:     torrentFile.Info.PieceLength,
-		Requested: 0,
-		BlockData: make([]byte, torrentFile.Info.PieceLength),
+	// Clean up connections
+	for _, client := range peerConnections {
+		client.Conn.Close()
 	}
 
-	_, err = torrent.DownloadBlockFromPeer(&pieceProgress)
+	// Save the downloaded file
+	outputFile, err := os.Create(torrentFile.Info.Name)
 	if err != nil {
 		panic(err)
 	}
+	defer outputFile.Close()
 
-	if !torrent.ValidatePiece(pieceProgress.BlockData, pieceProgress.Hash) {
-		fmt.Println("Piece validation failed")
+	_, err = outputFile.Write(fileData)
+	if err != nil {
+		panic(err)
 	}
-
-	conn.Close()
 }

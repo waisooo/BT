@@ -4,7 +4,6 @@ import (
 	bencode "bittorrent/decode"
 	"crypto/rand"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -19,64 +18,6 @@ type Peer struct {
 	Incomplete int
 	Interval   int      // How often queries should be re-sent
 	Peers      []string // IP address of all peers
-}
-
-type PieceProgress struct {
-	Client    *Client
-	Hash      [20]byte
-	Index     int
-	Received  int
-	Total     int
-	Requested int
-	BlockData []byte
-}
-
-func DownloadBlockFromPeer(state *PieceProgress) (*PieceProgress, error) {
-	// Read bitfield message from peer
-	err := ReadMessage(state)
-	if err != nil {
-		return state, err
-	}
-
-	SendInterested(state.Client)
-
-	err = ReadMessage(state)
-	if err != nil {
-		return state, err
-	}
-
-	if state.Client.Choked {
-		SendUnchoke(state.Client)
-	}
-
-	blockSize := MaxBlockSize
-	if state.Total < blockSize {
-		blockSize = state.Total
-	}
-
-	fmt.Println("Piece size is ", state.Total)
-	fmt.Println("Block size is ", blockSize)
-
-	for state.Received < state.Total {
-		if !state.Client.Choked {
-			if state.Total-state.Received < blockSize {
-				blockSize = state.Total - state.Received
-			}
-
-			SendRequest(state.Client, state.Index, state.Received, blockSize)
-
-			err = ReadMessage(state)
-
-			if err != nil {
-				return state, err
-			}
-
-			state.Received += blockSize
-		}
-
-	}
-
-	return state, nil
 }
 
 func HandShakePeer(conn net.Conn, infoHash [20]byte, peerId [20]byte) ([]byte, error) {
@@ -131,22 +72,7 @@ func GeneratePeerId() [20]byte {
 	return peerId
 }
 
-///////////////////////////////// Helper Functions /////////////////////////////////
-
-func hasPiece(bf []byte, index int) bool {
-	byteIndex := index / 8
-	bitIndex := index % 8
-
-	return bf[byteIndex]&(1<<(7-bitIndex)) != 0
-}
-
-func setPiece(bf []byte, index int) {
-	byteIndex := index / 8
-	bitIndex := index % 8
-
-	bf[byteIndex] |= 1 << (7 - bitIndex)
-}
-
+// /////////////////////////////// Helper Functions /////////////////////////////////
 func parsePeersResponse(resp io.ReadCloser) *Peer {
 	body, err := io.ReadAll(resp)
 	if err != nil {
