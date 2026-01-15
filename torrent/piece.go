@@ -6,42 +6,36 @@ import (
 	"time"
 )
 
+const MaxBlockSize = 16384
+const MaxPipelineRequests = 5
+
+type PieceWork struct {
+	Index            int
+	PieceHash        [20]byte
+	PieceSize        int
+	DownloadAttempts int // Number of download attempts that have been made
+}
+
 type PieceProgress struct {
-	Client    *Client
-	Hash      [20]byte
-	Index     int
-	Received  int
-	Total     int
-	Requested int
-	BlockData []byte
+	Index      int
+	Client     *Client
+	BlockData  []byte
+	Downloaded int
+	Requested  int
+	Backlog    int
 }
 
-func ConstructPieceProgress(client *Client, torrentFile TorrentFile) *PieceProgress {
-	pieceLength := calculatePieceLength(torrentFile.Info.Length, torrentFile.Info.PieceLength, 0)
-	return &PieceProgress{
-		Client:    client,
-		Hash:      torrentFile.PiecesHash[0],
-		Index:     0,
-		Received:  0,
-		Total:     pieceLength,
-		Requested: 0,
-		BlockData: make([]byte, pieceLength),
-	}
+type PieceResult struct {
+	Index int
+	Data  []byte
 }
 
-func calculatePieceLength(fileLength int, pieceLength int, index int) int {
+func CalculatePieceSize(fileLength int, pieceLength int, index int) int {
 	if (index+1)*pieceLength > fileLength {
 		return fileLength - (index * pieceLength)
 	}
 
 	return pieceLength
-}
-
-func HasPiece(bf []byte, index int) bool {
-	byteIndex := index / 8
-	bitIndex := index % 8
-
-	return bf[byteIndex]&(1<<(7-bitIndex)) != 0
 }
 
 func SetPiece(bf []byte, index int) {
@@ -51,58 +45,82 @@ func SetPiece(bf []byte, index int) {
 	bf[byteIndex] |= 1 << (7 - bitIndex)
 }
 
-func TryDownloadPiece(state *PieceProgress) (*PieceProgress, error) {
-	// Read bitfield message from peer
-	err := ReadMessage(state)
-	if err != nil {
-		return state, err
+func TryDownloadPiece(client *Client, pw *PieceWork) (*PieceResult, error) {
+	if !hasPiece(client.Bitfield, pw.Index) {
+		return &PieceResult{}, nil
 	}
 
-	if !HasPiece(state.Client.Bitfield, state.Index) {
-		return state, fmt.Errorf("Peer does not have piece %d", state.Index)
+	state := PieceProgress{
+		Client:    client,
+		BlockData: make([]byte, pw.PieceSize),
 	}
 
-	SendInterested(state.Client)
-	err = ReadMessage(state)
-	if err != nil {
-		return state, err
-	}
+	client.lock.Lock()
+	fmt.Println("Attempting to download piece", pw.Index)
+	SendInterested(client)
 
-	if state.Client.Choked {
-		SendUnchoke(state.Client)
+	fmt.Println("Send interested")
+	if client.Choked {
+		SendUnchoke(client)
 	}
 
 	blockSize := MaxBlockSize
-	if state.Total < blockSize {
-		blockSize = state.Total
+	if pw.PieceSize < blockSize {
+		blockSize = pw.PieceSize
 	}
 
-	state.Client.Conn.SetDeadline(time.Now().Add(30 * time.Second))
-	defer state.Client.Conn.SetDeadline(time.Time{})
+	client.Conn.SetDeadline(time.Now().Add(30 * time.Second))
+	defer client.Conn.SetDeadline(time.Time{})
 
-	for state.Received < state.Total {
-		if !state.Client.Choked {
-			if state.Total-state.Received < blockSize {
-				blockSize = state.Total - state.Received
+	for state.Downloaded < pw.PieceSize {
+		if !client.Choked {
+			// Fill the pipeline with requests, up to the maximum allowed
+			for state.Backlog < MaxPipelineRequests && state.Requested < pw.PieceSize {
+				if pw.PieceSize-state.Requested < blockSize {
+					blockSize = pw.PieceSize - state.Requested
+				}
+
+				SendRequest(client, pw.Index, state.Requested, blockSize)
+
+				state.Requested += blockSize
+				state.Backlog++
 			}
-
-			SendRequest(state.Client, state.Index, state.Received, blockSize)
-
-			err = ReadMessage(state)
-
-			if err != nil {
-				return state, err
-			}
-
-			state.Received += blockSize
 		}
 
+		err := ReadMessage(&state)
+		if err != nil {
+			return &PieceResult{}, err
+		}
 	}
 
-	return state, nil
+	result := PieceResult{
+		Index: pw.Index,
+		Data:  state.BlockData,
+	}
+
+	client.lock.Unlock()
+
+	return &result, nil
 }
 
-func ValidatePiece(pieceData []byte, expectedHash [20]byte) bool {
-	actualHash := sha1.Sum(pieceData)
-	return actualHash == expectedHash
+func ValidatePiece(piece *PieceResult, pw *PieceWork) bool {
+	// The piece has not been fully downloaded
+	if len(piece.Data) != pw.PieceSize {
+		return false
+	}
+
+	// Validate the piece hash
+	return sha1.Sum(piece.Data) == pw.PieceHash
+}
+
+// ////////////////////////////// Helper Functions /////////////////////////////////
+func hasPiece(bf []byte, index int) bool {
+	if bf == nil {
+		return false
+	}
+
+	byteIndex := index / 8
+	bitIndex := index % 8
+
+	return bf[byteIndex]&(1<<(7-bitIndex)) != 0
 }

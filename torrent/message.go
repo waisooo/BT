@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"sync"
 )
 
 // Meessage ids for peer communication
@@ -29,6 +30,7 @@ type Client struct {
 	Conn     net.Conn
 	Bitfield []byte
 	Choked   bool
+	lock     sync.Mutex
 }
 
 func ReadMessage(state *PieceProgress) error {
@@ -45,15 +47,27 @@ func ReadMessage(state *PieceProgress) error {
 		state.Client.Choked = false
 	case Bitfield:
 		state.Client.Bitfield = msg.Payload
+	case Have:
+		pieceIndex := binary.BigEndian.Uint32(msg.Payload[0:4])
+		SetPiece(state.Client.Bitfield, int(pieceIndex))
 	case Piece:
 		// Append the received block to the piece's block data
 		begin := binary.BigEndian.Uint32(msg.Payload[4:8])
-
 		copy(state.BlockData[begin:], msg.Payload[8:])
 		SetPiece(state.Client.Bitfield, state.Index)
+
+		state.Downloaded += len(msg.Payload) - 8
+		state.Backlog--
 	}
 
 	return nil
+}
+
+func SendHave(c *Client, pieceIndex int) {
+	payload := make([]byte, 4)
+	binary.BigEndian.PutUint32(payload[0:4], uint32(pieceIndex))
+
+	sendMessage(c.Conn, &Message{Id: Have, Payload: payload})
 }
 
 func SendInterested(c *Client) {

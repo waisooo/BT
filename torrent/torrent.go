@@ -87,6 +87,8 @@ func CalculatePiecesHash(torrentFile *TorrentFile) {
 	torrentFile.PiecesHash = piecesHash
 }
 
+// ////////////////////////////// Helper Functions /////////////////////////////////
+
 func calculateHash(data interface{}) [20]byte {
 	encodedInfo, err := bencode.Encode(data)
 	if err != nil {
