@@ -1,7 +1,11 @@
-package torrent
+package peers
 
 import (
-	bencode "bittorrent/decode"
+	"bittorrent/bencode"
+	"bittorrent/messages"
+	"bittorrent/pieces"
+	"bittorrent/torrent"
+
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -18,25 +22,24 @@ type Peers struct {
 	Peers []string // IP address of all peers
 }
 
-func DownloadFromPeers(peers *Peers, tf *TorrentFile, peerId [20]byte) {
+func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 	// Initialise worker queue and file data channel
-	workerQueue := make(chan *PieceWork, len(tf.PiecesHash))
+	workerQueue := make(chan *pieces.PieceWork, len(tf.PiecesHash))
 	for i := 0; i < len(tf.PiecesHash); i++ {
-		piece := PieceWork{
-			Index:            i,
-			PieceHash:        tf.PiecesHash[i],
-			PieceSize:        CalculatePieceSize(tf.Info.Length, tf.Info.PieceLength, i),
-			DownloadAttempts: 0,
+		piece := pieces.PieceWork{
+			Index:     i,
+			PieceHash: tf.PiecesHash[i],
+			PieceSize: pieces.CalculatePieceSize(tf.Info.Length, tf.Info.PieceLength, i),
 		}
 		workerQueue <- &piece
 	}
 
-	fileData := make(chan *PieceResult, len(tf.PiecesHash))
+	fileData := make(chan *pieces.PieceResult, len(tf.PiecesHash))
 
-	fmt.Println("There are", len(peers.Peers), "peers available for download")
+	fmt.Println("There are", len(p.Peers), "peers available for download")
 
 	// Start download workers for each peer
-	for _, ip := range peers.Peers {
+	for _, ip := range p.Peers {
 		go startDownloadWorker(ip, workerQueue, fileData, tf, peerId)
 	}
 
@@ -88,7 +91,7 @@ func HandShakePeer(conn net.Conn, infoHash [20]byte, peerId [20]byte) error {
 	return nil
 }
 
-func RequestPeers(tf *TorrentFile, peerId [20]byte, port int) *Peers {
+func RequestPeers(tf *torrent.TorrentFile, peerId [20]byte, port int) *Peers {
 	var peers *Peers
 	for _, url := range tf.AnnounceList {
 		trackerURL, err := buildTrackerURL(url, tf.InfoHash, tf.Info.Length, peerId, port)
@@ -123,7 +126,7 @@ func GeneratePeerId() [20]byte {
 }
 
 // /////////////////////////////// Helper Functions /////////////////////////////////
-func startDownloadWorker(ip string, workerQueue chan *PieceWork, fileData chan *PieceResult, tf *TorrentFile, peerId [20]byte) {
+func startDownloadWorker(ip string, workerQueue chan *pieces.PieceWork, fileData chan *pieces.PieceResult, tf *torrent.TorrentFile, peerId [20]byte) {
 	client, err := newPeerClient(ip, tf.InfoHash, peerId, len(tf.PiecesHash)/8+1)
 	if err != nil {
 		fmt.Println("Could not connect to peer", ip, ":", err)
@@ -132,13 +135,13 @@ func startDownloadWorker(ip string, workerQueue chan *PieceWork, fileData chan *
 
 	// Start downloading pieces
 	for pw := range workerQueue {
-		if !hasPiece(client.Bitfield, pw.Index) {
+		if !pieces.HasPiece(client.Bitfield, pw.Index) {
 			// Peer does not have this piece, re-queue it
 			workerQueue <- pw
 			continue
 		}
 
-		pr, err := TryDownloadPiece(client, pw)
+		pr, err := pieces.TryDownloadPiece(client, pw)
 		if err != nil {
 			fmt.Printf("Error downloading piece %d from peer %s: %s, re-queuing\n", pw.Index, ip, err)
 			// Error during download, re-queue the piece
@@ -146,7 +149,7 @@ func startDownloadWorker(ip string, workerQueue chan *PieceWork, fileData chan *
 			continue
 		}
 
-		if !ValidatePiece(pr, pw) {
+		if !pieces.ValidatePiece(pr, pw) {
 			fmt.Printf("Piece %d from peer %s failed validation, re-queuing\n", pw.Index, ip)
 			// Piece failed validation, re-queue it
 			workerQueue <- pw
@@ -164,7 +167,7 @@ func startDownloadWorker(ip string, workerQueue chan *PieceWork, fileData chan *
 	client.Conn.Close()
 }
 
-func newPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int) (*Client, error) {
+func newPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int) (*messages.Client, error) {
 	conn, err := net.Dial("tcp", ip)
 	if err != nil {
 		return nil, err
@@ -183,18 +186,17 @@ func newPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int
 	}
 
 	// Check if first message is bitfield
-	msg, err := recieveMessage(conn)
+	msg, err := messages.RecieveMessage(conn)
 	if err != nil {
 		return nil, err
 	}
 
 	success = true
 	bf := make([]byte, bitfieldLength)
-	if msg.Id == Bitfield {
+	if msg.Id == messages.Bitfield {
 		bf = msg.Payload
 	}
-
-	return &Client{
+	return &messages.Client{
 		PeerIP:   ip,
 		Conn:     conn,
 		Bitfield: bf,

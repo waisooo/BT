@@ -1,4 +1,4 @@
-package torrent
+package messages
 
 import (
 	"encoding/binary"
@@ -6,7 +6,7 @@ import (
 	"net"
 )
 
-// Meessage ids for peer communication
+// Message ids for peer communication
 const (
 	Choke         = 0
 	Unchoke       = 1
@@ -31,59 +31,30 @@ type Client struct {
 	Choked   bool
 }
 
-func ReadMessage(state *PieceProgress) error {
-	msg, err := recieveMessage(state.Client.Conn)
-
-	if err != nil {
-		return err
-	}
-
-	switch msg.Id {
-	case Choke:
-		state.Client.Choked = true
-	case Unchoke:
-		state.Client.Choked = false
-	case Bitfield:
-		state.Client.Bitfield = msg.Payload
-	case Have:
-		pieceIndex := binary.BigEndian.Uint32(msg.Payload[0:4])
-		SetPiece(state.Client.Bitfield, int(pieceIndex))
-	case Piece:
-		// Append the received block to the piece's block data
-		begin := binary.BigEndian.Uint32(msg.Payload[4:8])
-		copy(state.BlockData[begin:], msg.Payload[8:])
-
-		state.Downloaded += len(msg.Payload) - 8
-		state.Backlog--
-	}
-
-	return nil
-}
-
-func SendHave(c *Client, pieceIndex int) {
+func (c *Client) SendHave(pieceIndex int) {
 	payload := make([]byte, 4)
 	binary.BigEndian.PutUint32(payload[0:4], uint32(pieceIndex))
 
 	sendMessage(c.Conn, &Message{Id: Have, Payload: payload})
 }
 
-func SendInterested(c *Client) {
+func (c *Client) SendInterested() {
 	sendMessage(c.Conn, &Message{Id: Interested})
 }
 
-func SendUnchoke(c *Client) {
+func (c *Client) SendUnchoke() {
 	sendMessage(c.Conn, &Message{Id: Unchoke})
 }
 
-func SendChoke(c *Client) {
+func (c *Client) SendChoke() {
 	sendMessage(c.Conn, &Message{Id: Choke})
 }
 
-func SendNotInterested(c *Client) {
+func (c *Client) SendNotInterested() {
 	sendMessage(c.Conn, &Message{Id: NotInterested})
 }
 
-func SendRequest(c *Client, index int, begin int, length int) {
+func (c *Client) SendRequest(index int, begin int, length int) {
 	payload := make([]byte, 12)
 	binary.BigEndian.PutUint32(payload[0:4], uint32(index))
 	binary.BigEndian.PutUint32(payload[4:8], uint32(begin))
@@ -92,9 +63,7 @@ func SendRequest(c *Client, index int, begin int, length int) {
 	sendMessage(c.Conn, &Message{Id: Request, Payload: payload})
 }
 
-//////////////////////////////// Helper Functions /////////////////////////////////
-
-func recieveMessage(conn net.Conn) (*Message, error) {
+func RecieveMessage(conn net.Conn) (*Message, error) {
 	lengthBuf := make([]byte, 4)
 	_, err := conn.Read(lengthBuf)
 	if err != nil {

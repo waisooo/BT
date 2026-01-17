@@ -2,12 +2,23 @@ module main/main
 
 go 1.22.2
 
-replace bittorrent/decode => ./bencode
+replace bittorrent/bencode => ./bencode
 
 replace bittorrent/torrent => ./torrent
 
-replace bittorrent/peer => ./peer
+replace bittorrent/peers => ./peers
 
-require bittorrent/decode v0.0.0-00010101000000-000000000000 // indirect
+replace bittorrent/messages => ./messages
 
-require bittorrent/torrent v0.0.0-00010101000000-000000000000
+replace bittorrent/pieces => ./pieces
+
+require (
+	bittorrent/bencode v0.0.0-00010101000000-000000000000 // indirect
+	bittorrent/messages v0.0.0-00010101000000-000000000000 // indirect
+	bittorrent/pieces v0.0.0-00010101000000-000000000000 // indirect
+)
+
+require (
+	bittorrent/peers v0.0.0-00010101000000-000000000000
+	bittorrent/torrent v0.0.0-00010101000000-000000000000
+)

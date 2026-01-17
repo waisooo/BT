@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	bencode "bittorrent/decode"
+	bencode "bittorrent/bencode"
 )
 
 type TorrentFile struct {
@@ -103,7 +103,7 @@ func calculateHash(data interface{}) [20]byte {
 	encodedInfo, err := bencode.Encode(data)
 	if err != nil {
 		fmt.Println(err)
-		panic(err)
+		os.Exit(1)
 	}
 
 	return sha1.Sum(encodedInfo)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	peers "bittorrent/peers"
 	torrent "bittorrent/torrent"
 )
 
@@ -17,9 +18,9 @@ func main() {
 
 	torrent.CalculatePiecesHash(torrentFile)
 
-	peerId := torrent.GeneratePeerId()
-	peers := torrent.RequestPeers(torrentFile, peerId, 6881)
+	peerId := peers.GeneratePeerId()
+	peerIPs := peers.RequestPeers(torrentFile, peerId, 6881)
 
-	torrent.DownloadFromPeers(peers, torrentFile, peerId)
+	peerIPs.DownloadFromPeers(torrentFile, peerId)
 
 }
