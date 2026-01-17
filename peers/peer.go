@@ -5,7 +5,6 @@ import (
 	"bittorrent/messages"
 	"bittorrent/pieces"
 	"bittorrent/torrent"
-
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
 )
 
 type Peers struct {
@@ -38,10 +38,16 @@ func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 
 	fmt.Println("There are", len(p.Peers), "peers available for download")
 
+	var wg sync.WaitGroup
 	// Start download workers for each peer
 	for _, ip := range p.Peers {
-		go startDownloadWorker(ip, workerQueue, fileData, tf, peerId)
+		wg.Go(func() {
+			startDownloadWorker(ip, workerQueue, fileData, tf, peerId)
+		})
 	}
+
+	// Wait for all workers to finish
+	wg.Wait()
 
 	fmt.Println("All pieces have been downloaded")
 
@@ -109,7 +115,13 @@ func RequestPeers(tf *torrent.TorrentFile, peerId [20]byte, port int) *Peers {
 		defer resp.Body.Close()
 
 		peers = parsePeersResponse(resp.Body)
-		break
+		if len(peers.Peers) > 0 {
+			break
+		}
+	}
+
+	if len(peers.Peers) == 0 {
+		log.Fatal("No peers found from any tracker")
 	}
 
 	return peers

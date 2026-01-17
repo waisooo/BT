@@ -7,7 +7,7 @@ import (
 
 func main() {
 	// Path to the torrent file
-	torrentFilePath := "debian-13.3.0-amd64-netinst.iso.torrent"
+	torrentFilePath := "ubuntu-22.04.5-desktop-amd64.iso.torrent"
 	// torrentFilePath := "sample.torrent"
 
 	// Parse the torrent file to extract metadata

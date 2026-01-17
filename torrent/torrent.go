@@ -61,9 +61,14 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 
 	// If the announce-list key exists, the list of trackers is stored there
 	annouceList := []string{}
-	if val, ok := fileDict["announce-list"].([]string); ok {
-		annouceList = append(annouceList, val...)
-
+	if list, ok := fileDict["announce-list"].([]interface{}); ok {
+		for _, trackers := range list {
+			if tracker, ok := trackers.([]interface{}); ok {
+				for _, t := range tracker {
+					annouceList = append(annouceList, t.(string))
+				}
+			}
+		}
 	}
 
 	// Add the announce key at the end in case all other trackers fail
