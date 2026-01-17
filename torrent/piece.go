@@ -47,7 +47,7 @@ func SetPiece(bf []byte, index int) {
 
 func TryDownloadPiece(client *Client, pw *PieceWork) (*PieceResult, error) {
 	if !hasPiece(client.Bitfield, pw.Index) {
-		return &PieceResult{}, nil
+		return &PieceResult{}, fmt.Errorf("Peer does not have piece %d", pw.Index)
 	}
 
 	state := PieceProgress{
@@ -55,11 +55,9 @@ func TryDownloadPiece(client *Client, pw *PieceWork) (*PieceResult, error) {
 		BlockData: make([]byte, pw.PieceSize),
 	}
 
-	client.lock.Lock()
-	fmt.Println("Attempting to download piece", pw.Index)
+	fmt.Println("Attempting to download piece", pw.Index, "from peer", client.PeerIP)
 	SendInterested(client)
 
-	fmt.Println("Send interested")
 	if client.Choked {
 		SendUnchoke(client)
 	}
@@ -97,8 +95,6 @@ func TryDownloadPiece(client *Client, pw *PieceWork) (*PieceResult, error) {
 		Index: pw.Index,
 		Data:  state.BlockData,
 	}
-
-	client.lock.Unlock()
 
 	return &result, nil
 }

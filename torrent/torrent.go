@@ -9,10 +9,10 @@ import (
 )
 
 type TorrentFile struct {
-	Announce   string
-	InfoHash   [20]byte
-	PiecesHash [][20]byte
-	Info       InfoDict
+	AnnounceList []string
+	InfoHash     [20]byte
+	PiecesHash   [][20]byte
+	Info         InfoDict
 }
 
 type InfoDict struct {
@@ -59,10 +59,20 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 		}
 	}
 
+	// If the announce-list key exists, the list of trackers is stored there
+	annouceList := []string{}
+	if val, ok := fileDict["announce-list"].([]string); ok {
+		annouceList = append(annouceList, val...)
+
+	}
+
+	// Add the announce key at the end in case all other trackers fail
+	annouceList = append(annouceList, fileDict["announce"].(string))
+
 	torrent := TorrentFile{
-		Announce: fileDict["announce"].(string),
-		InfoHash: infoHash,
-		Info:     infoDict,
+		AnnounceList: annouceList,
+		InfoHash:     infoHash,
+		Info:         infoDict,
 	}
 
 	return &torrent, nil

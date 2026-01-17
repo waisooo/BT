@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,10 +15,7 @@ import (
 )
 
 type Peers struct {
-	Complete   int
-	Incomplete int
-	Interval   int      // How often queries should be re-sent
-	Peers      []string // IP address of all peers
+	Peers []string // IP address of all peers
 }
 
 func DownloadFromPeers(peers *Peers, tf *TorrentFile, peerId [20]byte) {
@@ -39,7 +37,7 @@ func DownloadFromPeers(peers *Peers, tf *TorrentFile, peerId [20]byte) {
 
 	// Start download workers for each peer
 	for _, ip := range peers.Peers {
-		startDownloadWorker(ip, workerQueue, fileData, tf, peerId)
+		go startDownloadWorker(ip, workerQueue, fileData, tf, peerId)
 	}
 
 	fmt.Println("All pieces have been downloaded")
@@ -54,7 +52,7 @@ func DownloadFromPeers(peers *Peers, tf *TorrentFile, peerId [20]byte) {
 
 	err := os.WriteFile(tf.Info.Name, finalData, 0644)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	fmt.Println("File download complete:", tf.Info.Name)
@@ -91,26 +89,34 @@ func HandShakePeer(conn net.Conn, infoHash [20]byte, peerId [20]byte) error {
 }
 
 func RequestPeers(tf *TorrentFile, peerId [20]byte, port int) *Peers {
-	trackerURL, err := buildTrackerURL(tf, peerId, port)
-	if err != nil {
-		panic(err)
+	var peers *Peers
+	for _, url := range tf.AnnounceList {
+		trackerURL, err := buildTrackerURL(url, tf.InfoHash, tf.Info.Length, peerId, port)
+		if err != nil {
+			log.Println("Error building tracker URL:", err)
+			continue
+		}
+
+		resp, err := http.Get(trackerURL)
+		if err != nil {
+			log.Println("Error contacting tracker:", err)
+			continue
+		}
+
+		defer resp.Body.Close()
+
+		peers = parsePeersResponse(resp.Body)
+		break
 	}
 
-	resp, err := http.Get(trackerURL)
-	if err != nil {
-		panic(err)
-	}
-
-	defer resp.Body.Close()
-
-	return parsePeersResponse(resp.Body)
+	return peers
 }
 
 func GeneratePeerId() [20]byte {
 	var peerId [20]byte
 	_, err := rand.Read(peerId[:])
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	return peerId
@@ -124,44 +130,32 @@ func startDownloadWorker(ip string, workerQueue chan *PieceWork, fileData chan *
 		return
 	}
 
-	fmt.Println("Connection made with peer")
-
-	haveUpdates := make(chan int, 64)
-
-	go listenForHave(client, haveUpdates)
-
 	// Start downloading pieces
-	for len(fileData) < len(tf.PiecesHash) {
-		select {
-		case piece := <-haveUpdates:
-			SetPiece(client.Bitfield, piece)
-		default:
-			pw := <-workerQueue
-			if !hasPiece(client.Bitfield, pw.Index) {
-				// Peer does not have this piece, re-queue it
-				workerQueue <- pw
-				continue
-			}
-
-			pr, err := TryDownloadPiece(client, pw)
-			if err != nil {
-				fmt.Printf("Error downloading piece %d from peer %s: %s, re-queuing\n", pw.Index, ip, err)
-				// Error during download, re-queue the piece
-				workerQueue <- pw
-				continue
-			}
-
-			if !ValidatePiece(pr, pw) {
-				fmt.Printf("Piece %d from peer %s failed validation, re-queuing\n", pw.Index, ip)
-				// Piece failed validation, re-queue it
-				workerQueue <- pw
-				continue
-			}
-
-			fmt.Printf("Finished downloading piece %d from peer %s\n", pw.Index, ip)
-
-			fileData <- pr
+	for pw := range workerQueue {
+		if !hasPiece(client.Bitfield, pw.Index) {
+			// Peer does not have this piece, re-queue it
+			workerQueue <- pw
+			continue
 		}
+
+		pr, err := TryDownloadPiece(client, pw)
+		if err != nil {
+			fmt.Printf("Error downloading piece %d from peer %s: %s, re-queuing\n", pw.Index, ip, err)
+			// Error during download, re-queue the piece
+			workerQueue <- pw
+			continue
+		}
+
+		if !ValidatePiece(pr, pw) {
+			fmt.Printf("Piece %d from peer %s failed validation, re-queuing\n", pw.Index, ip)
+			// Piece failed validation, re-queue it
+			workerQueue <- pw
+			continue
+		}
+
+		fmt.Printf("Finished downloading piece %d from peer %s\n", pw.Index, ip)
+
+		fileData <- pr
 	}
 
 	fmt.Printf("Peer %s has no more pieces to download\n", ip)
@@ -209,27 +203,10 @@ func newPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int
 
 }
 
-func listenForHave(conn *Client, haveUpdates chan int) {
-	for {
-		msg, err := recieveMessage(conn.Conn)
-		if err != nil {
-			fmt.Println("Error reading message from peer:", err)
-			return
-		}
-
-		fmt.Println("Recived message ", msg.Id, " with contents ", msg.Payload)
-		if msg.Id == Have {
-			pieceIndex := binary.BigEndian.Uint32(msg.Payload)
-			haveUpdates <- int(pieceIndex)
-		}
-
-	}
-}
-
 func parsePeersResponse(resp io.ReadCloser) *Peers {
 	body, err := io.ReadAll(resp)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	peersResponse, _, _ := bencode.Decode(body)
@@ -250,29 +227,26 @@ func parsePeersResponse(resp io.ReadCloser) *Peers {
 	}
 
 	parsedPeers := Peers{
-		Complete:   peersMap["complete"].(int),
-		Incomplete: peersMap["incomplete"].(int),
-		Interval:   peersMap["interval"].(int),
-		Peers:      parsedPeerIPs,
+		Peers: parsedPeerIPs,
 	}
 
 	return &parsedPeers
 
 }
 
-func buildTrackerURL(tf *TorrentFile, peerId [20]byte, port int) (string, error) {
-	baseURL, err := url.Parse(tf.Announce)
+func buildTrackerURL(urlString string, hash [20]byte, pieceLength int, peerId [20]byte, port int) (string, error) {
+	baseURL, err := url.Parse(urlString)
 	if err != nil {
 		return "", err
 	}
 
 	query := baseURL.Query()
-	query.Set("info_hash", string(tf.InfoHash[:]))
+	query.Set("info_hash", string(hash[:]))
 	query.Set("peer_id", string(peerId[:]))
 	query.Set("port", strconv.Itoa(port))
 	query.Set("uploaded", "0")
 	query.Set("downloaded", "0")
-	query.Set("left", strconv.Itoa(tf.Info.Length))
+	query.Set("left", strconv.Itoa(pieceLength))
 	query.Set("compact", "1")
 
 	baseURL.RawQuery = query.Encode()

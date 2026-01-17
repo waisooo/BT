@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
-	"sync"
 )
 
 // Meessage ids for peer communication
@@ -17,7 +16,7 @@ const (
 	Bitfield      = 5
 	Request       = 6
 	Piece         = 7
-	cancel        = 8
+	Cancel        = 8
 )
 
 type Message struct {
@@ -30,7 +29,6 @@ type Client struct {
 	Conn     net.Conn
 	Bitfield []byte
 	Choked   bool
-	lock     sync.Mutex
 }
 
 func ReadMessage(state *PieceProgress) error {
@@ -54,7 +52,6 @@ func ReadMessage(state *PieceProgress) error {
 		// Append the received block to the piece's block data
 		begin := binary.BigEndian.Uint32(msg.Payload[4:8])
 		copy(state.BlockData[begin:], msg.Payload[8:])
-		SetPiece(state.Client.Bitfield, state.Index)
 
 		state.Downloaded += len(msg.Payload) - 8
 		state.Backlog--
