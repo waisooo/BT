@@ -82,6 +82,8 @@ func TryDownloadPiece(client *messages.Client, pw *PieceWork) (*PieceResult, err
 		Data:  state.BlockData,
 	}
 
+	client.SendHave(pw.Index)
+
 	return &result, nil
 }
 

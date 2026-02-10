@@ -3,13 +3,15 @@ package download
 import (
 	peers "bittorrent/peers"
 	torrent "bittorrent/torrent"
-	"log"
+	"fmt"
+	"os"
 )
 
 func DownloadFile(torrentFilePath string) {
 	torrentFile, err := torrent.ExtractTorrentInfo(torrentFilePath)
 	if err != nil {
-		log.Fatalf("Failed to extract torrent info: %v", err)
+		fmt.Printf("Error: Failed to extract torrent file metadata, %s\n", err)
+		os.Exit(1)
 	}
 
 	torrent.CalculatePiecesHash(torrentFile)

@@ -13,6 +13,7 @@ type TorrentFile struct {
 	InfoHash     [20]byte
 	PiecesHash   [][20]byte
 	Info         InfoDict
+	Interval     int
 }
 
 type InfoDict struct {
@@ -78,6 +79,7 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 		AnnounceList: annouceList,
 		InfoHash:     infoHash,
 		Info:         infoDict,
+		Interval:     1800,
 	}
 
 	return &torrent, nil

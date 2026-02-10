@@ -16,10 +16,19 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type Peers struct {
-	Peers []string // IP address of all peers
+	Interval int      // Time in seconds that the client should wait before re-contacting the tracker
+	Peers    []string // IP address of all peers
+}
+
+type workerInfo struct {
+	ip          string
+	hash        [20]byte
+	workerQueue chan *pieces.PieceWork
+	fileData    chan *pieces.PieceResult
 }
 
 func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
@@ -38,13 +47,22 @@ func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 
 	fmt.Println("There are", len(p.Peers), "peers available for download")
 
+	bitfieldLength := (len(tf.PiecesHash) / 8) + 1
+
 	var wg sync.WaitGroup
+
 	// Start download workers for each peer
 	for _, ip := range p.Peers {
-		go startDownloadWorker(ip, workerQueue, fileData, tf, peerId, &wg)
+		workerInfo := workerInfo{
+			ip:          ip,
+			hash:        tf.InfoHash,
+			workerQueue: workerQueue,
+			fileData:    fileData,
+		}
+
+		go handleWorker(&workerInfo, &wg, bitfieldLength, peerId, p.Interval)
 	}
 
-	// Wait for all workers to finish
 	wg.Wait()
 
 	fmt.Println("All pieces have been downloaded")
@@ -59,7 +77,8 @@ func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 
 	err := os.WriteFile(tf.Info.Name, finalData, 0644)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
 	fmt.Println("File download complete:", tf.Info.Name)
@@ -100,13 +119,13 @@ func RequestPeers(tf *torrent.TorrentFile, peerId [20]byte, port int) *Peers {
 	for _, url := range tf.AnnounceList {
 		trackerURL, err := buildTrackerURL(url, tf.InfoHash, tf.Info.Length, peerId, port)
 		if err != nil {
-			log.Println("Error building tracker URL:", err)
+			fmt.Println("Error building tracker URL:", err)
 			continue
 		}
 
 		resp, err := http.Get(trackerURL)
 		if err != nil {
-			log.Println("Error contacting tracker:", err)
+			fmt.Println("Error contacting tracker:", err)
 			continue
 		}
 
@@ -119,7 +138,8 @@ func RequestPeers(tf *torrent.TorrentFile, peerId [20]byte, port int) *Peers {
 	}
 
 	if len(peers.Peers) == 0 {
-		log.Fatal("No peers found from any tracker")
+		fmt.Println("No peers found from any tracker")
+		os.Exit(1)
 	}
 
 	return peers
@@ -136,47 +156,77 @@ func GeneratePeerId() [20]byte {
 }
 
 // /////////////////////////////// Helper Functions /////////////////////////////////
-func startDownloadWorker(ip string, workerQueue chan *pieces.PieceWork, fileData chan *pieces.PieceResult, tf *torrent.TorrentFile, peerId [20]byte, wg *sync.WaitGroup) {
-	defer wg.Done()
+func handleWorker(workerInfo *workerInfo, wg *sync.WaitGroup, bitfieldLength int, peerId [20]byte, interval int) {
+	// Attempt to start the download worker, retrying up to 5 times if there are any errors
+	for retries := 0; retries < 5; {
+		err := startDownloadWorker(workerInfo, bitfieldLength, peerId)
+		// If there are no errors, or if there are no more pieces to download, we exit the retry loop
+		if err == nil || len(workerInfo.workerQueue) == 0 {
+			break
+		} else {
+			// There was an error, which was either:
+			// - An error connecting to peer
+			// - An error during download
+			// In either case, wait the recommended retry time before attempting to connect again
+			time.Sleep(time.Duration(interval) * time.Second)
+			retries++
+			continue
+		}
 
-	client, err := newPeerClient(ip, tf.InfoHash, peerId, len(tf.PiecesHash)/8+1)
+	}
+
+	wg.Done()
+}
+
+func startDownloadWorker(workerInfo *workerInfo, bitfieldLength int, peerId [20]byte) error {
+	ip := workerInfo.ip
+	workerQueue := workerInfo.workerQueue
+
+	client, err := newPeerClient(ip, workerInfo.hash, peerId, bitfieldLength)
 	if err != nil {
 		fmt.Println("Could not connect to peer", ip, ":", err)
-		return
+		return err
 	}
 
 	// Start downloading pieces
 	for pw := range workerQueue {
-		if !pieces.HasPiece(client.Bitfield, pw.Index) {
+		index := pw.Index
+		if !pieces.HasPiece(client.Bitfield, index) {
 			// Peer does not have this piece, re-queue it
 			workerQueue <- pw
 			continue
 		}
 
-		pr, err := pieces.TryDownloadPiece(client, pw)
+		piece, err := pieces.TryDownloadPiece(client, pw)
+		if err == io.EOF {
+			// If the peer connection has closed, we can stop trying to download from this peer
+			client.Conn.Close()
+			return err
+		}
+
 		if err != nil {
-			fmt.Printf("Error downloading piece %d from peer %s: %s, re-queuing\n", pw.Index, ip, err)
+			fmt.Printf("Error downloading piece %d from peer %s: %s, re-queuing\n", index, ip, err)
 			// Error during download, re-queue the piece
 			workerQueue <- pw
 			continue
 		}
 
-		if !pieces.ValidatePiece(pr, pw) {
-			fmt.Printf("Piece %d from peer %s failed validation, re-queuing\n", pw.Index, ip)
+		if !pieces.ValidatePiece(piece, pw) {
+			fmt.Printf("Piece %d from peer %s failed validation, re-queuing\n", index, ip)
 			// Piece failed validation, re-queue it
 			workerQueue <- pw
 			continue
 		}
 
-		fmt.Printf("Finished downloading piece %d from peer %s\n", pw.Index, ip)
+		fmt.Printf("Finished downloading piece %d from peer %s\n", index, ip)
 
-		fileData <- pr
+		workerInfo.fileData <- piece
 	}
-
-	fmt.Printf("Peer %s has no more pieces to download\n", ip)
 
 	// Close the connection when done
 	client.Conn.Close()
+
+	return nil
 }
 
 func newPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int) (*messages.Client, error) {
@@ -220,11 +270,17 @@ func newPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int
 func parsePeersResponse(resp io.ReadCloser) *Peers {
 	body, err := io.ReadAll(resp)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
 	peersResponse, _, _ := bencode.Decode(body)
 	peersMap := peersResponse.(map[string]interface{})
+
+	if peersMap["failure reason"] != nil {
+		fmt.Println("Tracker response error:", peersMap["failure reason"])
+		os.Exit(1)
+	}
 
 	unparsedPeerIPs := []byte(peersMap["peers"].(string))
 	parsedPeerIPs := []string{}
@@ -241,7 +297,8 @@ func parsePeersResponse(resp io.ReadCloser) *Peers {
 	}
 
 	parsedPeers := Peers{
-		Peers: parsedPeerIPs,
+		Interval: peersMap["interval"].(int),
+		Peers:    parsedPeerIPs,
 	}
 
 	return &parsedPeers

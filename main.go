@@ -2,18 +2,20 @@ package main
 
 import (
 	download "bittorrent/download"
-	"log"
+	"fmt"
 	"os"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatalf("Please provide the path to the torrent file as a command-line argument. E.g., go run main.go /path/to/file.torrent")
+		fmt.Println("Please provide the path to the torrent file as a command-line argument. E.g. go run main.go /path/to/file.torrent")
+		os.Exit(1)
 	}
 
 	torrentFilePath := os.Args[1]
 	if _, err := os.Stat(torrentFilePath); os.IsNotExist(err) {
-		log.Fatalf("The specified torrent file does not exist: %s", torrentFilePath)
+		fmt.Println(err)
+		os.Exit(1)
 	}
 
 	download.DownloadFile(torrentFilePath)
