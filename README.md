@@ -1,4 +1,4 @@
-# BitTorrent Client
+# BitTorrent
 
 This project is a basic implementation of a bitTorrent client from scratch in Go.
 

@@ -169,6 +169,7 @@ func handleWorker(workerInfo *workerInfo, wg *sync.WaitGroup, bitfieldLength int
 			// - An error during download
 			// In either case, wait the recommended retry time before attempting to connect again
 			time.Sleep(time.Duration(interval) * time.Second)
+			interval *= 2
 			retries++
 			continue
 		}
