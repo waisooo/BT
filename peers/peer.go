@@ -41,9 +41,7 @@ func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 	var wg sync.WaitGroup
 	// Start download workers for each peer
 	for _, ip := range p.Peers {
-		wg.Go(func() {
-			startDownloadWorker(ip, workerQueue, fileData, tf, peerId)
-		})
+		go startDownloadWorker(ip, workerQueue, fileData, tf, peerId, &wg)
 	}
 
 	// Wait for all workers to finish
@@ -138,7 +136,9 @@ func GeneratePeerId() [20]byte {
 }
 
 // /////////////////////////////// Helper Functions /////////////////////////////////
-func startDownloadWorker(ip string, workerQueue chan *pieces.PieceWork, fileData chan *pieces.PieceResult, tf *torrent.TorrentFile, peerId [20]byte) {
+func startDownloadWorker(ip string, workerQueue chan *pieces.PieceWork, fileData chan *pieces.PieceResult, tf *torrent.TorrentFile, peerId [20]byte, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	client, err := newPeerClient(ip, tf.InfoHash, peerId, len(tf.PiecesHash)/8+1)
 	if err != nil {
 		fmt.Println("Could not connect to peer", ip, ":", err)
