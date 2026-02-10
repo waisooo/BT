@@ -1,26 +1,21 @@
 package main
 
 import (
-	peers "bittorrent/peers"
-	torrent "bittorrent/torrent"
+	download "bittorrent/download"
+	"log"
+	"os"
 )
 
 func main() {
-	// Path to the torrent file
-	torrentFilePath := "ubuntu-22.04.5-desktop-amd64.iso.torrent"
-	// torrentFilePath := "sample.torrent"
-
-	// Parse the torrent file to extract metadata
-	torrentFile, err := torrent.ExtractTorrentInfo(torrentFilePath)
-	if err != nil {
-		panic(err)
+	if len(os.Args) < 2 {
+		log.Fatalf("Please provide the path to the torrent file as a command-line argument. E.g., go run main.go /path/to/file.torrent")
 	}
 
-	torrent.CalculatePiecesHash(torrentFile)
+	torrentFilePath := os.Args[1]
+	if _, err := os.Stat(torrentFilePath); os.IsNotExist(err) {
+		log.Fatalf("The specified torrent file does not exist: %s", torrentFilePath)
+	}
 
-	peerId := peers.GeneratePeerId()
-	peerIPs := peers.RequestPeers(torrentFile, peerId, 6881)
-
-	peerIPs.DownloadFromPeers(torrentFile, peerId)
+	download.DownloadFile(torrentFilePath)
 
 }
