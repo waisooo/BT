@@ -1,9 +1,10 @@
 package main
 
 import (
-	download "bittorrent/download"
 	"fmt"
 	"os"
+
+	"github.com/anthony/BT/download"
 )
 
 func main() {
@@ -19,5 +20,4 @@ func main() {
 	}
 
 	download.DownloadFile(torrentFilePath)
-
 }

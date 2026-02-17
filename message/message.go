@@ -1,4 +1,4 @@
-package messages
+package message
 
 import (
 	"encoding/binary"
@@ -25,8 +25,8 @@ type Message struct {
 }
 
 type Client struct {
-	PeerIP   string
 	Conn     net.Conn
+	Ip       string
 	Bitfield []byte
 	Choked   bool
 }

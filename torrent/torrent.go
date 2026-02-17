@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	bencode "bittorrent/bencode"
+	"github.com/anthony/BT/bencode"
 )
 
 type TorrentFile struct {
@@ -17,9 +17,9 @@ type TorrentFile struct {
 }
 
 type InfoDict struct {
+	Name        string
 	PieceLength int
 	Pieces      string
-	Name        string
 	Length      int
 }
 
@@ -43,16 +43,16 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 
 	infoDict := InfoDict{}
 	if val, ok := fileDict["info"].(map[string]interface{}); ok {
+		if name, ok := val["name"].(string); ok {
+			infoDict.Name = name
+		}
+
 		if pieceLength, ok := val["piece length"].(int); ok {
 			infoDict.PieceLength = pieceLength
 		}
 
 		if pieces, ok := val["pieces"].(string); ok {
 			infoDict.Pieces = pieces
-		}
-
-		if name, ok := val["name"].(string); ok {
-			infoDict.Name = name
 		}
 
 		if length, ok := val["length"].(int); ok {
@@ -64,16 +64,14 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 	annouceList := []string{}
 	if list, ok := fileDict["announce-list"].([]interface{}); ok {
 		for _, trackers := range list {
-			if tracker, ok := trackers.([]interface{}); ok {
-				for _, t := range tracker {
-					annouceList = append(annouceList, t.(string))
-				}
-			}
+			annouceList = append(annouceList, trackers.([]string)...)
 		}
 	}
 
-	// Add the announce key at the end in case all other trackers fail
-	annouceList = append(annouceList, fileDict["announce"].(string))
+	// Only `announce` if `announce list` is not present
+	if len(annouceList) == 0 {
+		annouceList = append(annouceList, fileDict["announce"].(string))
+	}
 
 	torrent := TorrentFile{
 		AnnounceList: annouceList,
@@ -85,23 +83,23 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 	return &torrent, nil
 }
 
-func CalculatePiecesHash(torrentFile *TorrentFile) {
+func CalculatePiecesHash(torrentFile *TorrentFile) error {
 	infoMap := torrentFile.Info
+	const hashLen = 20
 
-	pieces := []byte(infoMap.Pieces)
-	var piecesHash = [][20]byte{}
-	for i := 0; i < len(pieces); i += 20 {
-		end := i + 20
-		if end > len(pieces) {
-			end = len(pieces)
-		}
-
-		var pieceHash [20]byte
-		copy(pieceHash[:], pieces[i:end])
-		piecesHash = append(piecesHash, pieceHash)
+	if len(infoMap.Pieces)%hashLen != 0 {
+		return fmt.Errorf("Invalid length for info pieces")
 	}
 
-	torrentFile.PiecesHash = piecesHash
+	pieceHashes := make([][20]byte, len(infoMap.Pieces)/hashLen)
+	for i := 0; i < len(pieceHashes); i++ {
+		piece := infoMap.Pieces[i*hashLen : (i+1)*hashLen]
+		copy(pieceHashes[i][:], piece)
+	}
+
+	torrentFile.PiecesHash = pieceHashes
+
+	return nil
 }
 
 // ////////////////////////////// Helper Functions /////////////////////////////////
