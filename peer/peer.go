@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"time"
 
 	"github.com/anthony/BT/message"
@@ -74,23 +73,18 @@ func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 		fmt.Printf("%0.2f%% complete\n", float64(i)/float64(len(tf.PiecesHash))*100)
 	}
 
-	err := os.WriteFile(tf.Info.Name, finalData, 0644)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-
 	close(workerQueue)
+
 }
 
-func RemoveDuplicatePeers(peers []string) []string {
+func RemoveDuplicatePeers(peers []net.TCPAddr) []net.TCPAddr {
 	peerSet := make(map[string]bool)
-	uniquePeers := []string{}
+	uniquePeers := []net.TCPAddr{}
 
 	for _, peer := range peers {
-		if !peerSet[peer] {
+		if !peerSet[peer.String()] {
 			uniquePeers = append(uniquePeers, peer)
-			peerSet[peer] = true
+			peerSet[peer.String()] = true
 		}
 	}
 
@@ -133,13 +127,13 @@ func GeneratePeerId() [20]byte {
 	return peerId
 }
 
-func NewPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int) (*message.Client, error) {
-	conn, err := net.DialTimeout("tcp", ip, 5*time.Second)
+func NewPeerClient(addr net.TCPAddr, hash [20]byte, peerId [20]byte, bitfieldLength int) (*message.Client, error) {
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("dialing: %w", err)
 	}
 
-	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	conn.SetDeadline(time.Now().Add(5 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 
 	err = HandShakePeer(conn, hash, peerId)
@@ -159,7 +153,7 @@ func NewPeerClient(ip string, hash [20]byte, peerId [20]byte, bitfieldLength int
 	}
 
 	return &message.Client{
-		Ip:       ip,
+		Ip:       addr.IP.String(),
 		Conn:     conn,
 		Bitfield: bf,
 		Choked:   true,

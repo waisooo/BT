@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -14,8 +13,7 @@ const protocolId uint64 = 0x41727101980
 const connectAction uint32 = 0
 const announceAction uint32 = 1
 
-func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte, port int) ([]string, error) {
-
+func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte, port int) ([]net.TCPAddr, error) {
 	udpAddr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
 	if err != nil {
 		return nil, fmt.Errorf("Error resolving UDP address: %s", err)
@@ -32,8 +30,6 @@ func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte
 	}
 
 	// Initiate handshake and get connection ID
-	fmt.Println(url.Scheme)
-
 	connectionId, err := initiateUDPHandshake(conn)
 	if err != nil {
 		return nil, err
@@ -48,7 +44,7 @@ func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte
 	// https://www.bittorrent.org/beps/bep_0015.html#tracker-udp-protocol
 	announceMsg := make([]byte, 98)
 	binary.BigEndian.PutUint64(announceMsg[0:8], connectionId)
-	binary.BigEndian.PutUint32(announceMsg[8:12], announceAction)
+	binary.BigEndian.PutUint32(announceMsg[8:12], uint32(announceAction))
 	binary.BigEndian.PutUint32(announceMsg[12:16], transactionId)
 
 	copy(announceMsg[16:36], infoHash[:])
@@ -88,13 +84,16 @@ func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte
 
 	_, _, _ = interval, leechers, seeders // Currently unused, but could be used to prioritise certain trackers in the future
 
-	peerIPs := []string{}
+	peerIPs := []net.TCPAddr{}
 
 	for i := 12; i < len(resp); i += 6 {
 		ip := net.IP(resp[i : i+4]).String()
-		port := strconv.Itoa(int(binary.BigEndian.Uint16(resp[i+4 : i+6])))
+		port := int(binary.BigEndian.Uint16(resp[i+4 : i+6]))
 
-		peerIPs = append(peerIPs, ip+":"+port)
+		peerIPs = append(peerIPs, net.TCPAddr{
+			IP:   net.ParseIP(ip),
+			Port: port,
+		})
 	}
 
 	return peerIPs, nil
@@ -138,16 +137,17 @@ func initiateUDPHandshake(conn *net.UDPConn) (uint64, error) {
 
 	// Send connection request
 	msg := make([]byte, 16)
-	binary.BigEndian.PutUint64(msg[0:8], protocolId)      // Protocol ID
-	binary.BigEndian.PutUint32(msg[8:12], connectAction)  // Action (connect)
-	binary.BigEndian.PutUint32(msg[12:16], transactionId) // Transaction ID
+	binary.BigEndian.PutUint64(msg[0:8], uint64(protocolId))     // Protocol ID
+	binary.BigEndian.PutUint32(msg[8:12], uint32(connectAction)) // Action (connect)
+	binary.BigEndian.PutUint32(msg[12:16], transactionId)        // Transaction ID
+
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) // Set a read deadline to avoid hanging indefinitely
+	defer conn.SetDeadline(time.Time{})
 
 	_, err = conn.Write(msg)
 	if err != nil {
 		return 0, err
 	}
-
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) // Set a read deadline to avoid hanging indefinitely
 
 	resp := make([]byte, 16)
 	n, _, _, _, err := conn.ReadMsgUDP(resp, nil)

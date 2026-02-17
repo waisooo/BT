@@ -13,7 +13,7 @@ import (
 	"github.com/anthony/BT/bencode"
 )
 
-func RequestPeers(trackerUrl string, infoHash [20]byte, peerId [20]byte, port int) ([]string, error) {
+func RequestPeers(trackerUrl string, infoHash [20]byte, peerId [20]byte, port int) ([]net.TCPAddr, error) {
 	url, err := url.Parse(trackerUrl)
 	if err != nil {
 		fmt.Println("Error parsing tracker URL:", err)
@@ -30,7 +30,28 @@ func RequestPeers(trackerUrl string, infoHash [20]byte, peerId [20]byte, port in
 	}
 }
 
-func requestPeersFromHTTPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte, port int) ([]string, error) {
+///////////////////////////// Helper functions /////////////////////////////
+
+type compactHttpTrackerResp struct {
+	Interval int    `mapstructure:"interval"`
+	Peers    string `mapstructure:"peers"`
+}
+
+type normalHttpTrackerResp struct {
+	Peers []struct {
+		Id   string `mapstructure:"peer_id"`
+		Ip   string `mapstructure:"ip"`
+		Port int    `mapstructure:"port"`
+	} `mapstructure:"peers"`
+	Interval   int    `mapstructure:"interval"`
+	InfoHash   string `mapstructure:"info_hash"`
+	Uploaded   int    `mapstructure:"uploaded"`
+	Downloaded int    `mapstructure:"downloaded"`
+	Left       int    `mapstructure:"left"`
+	Event      string `mapstructure:"event"`
+}
+
+func requestPeersFromHTTPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte, port int) ([]net.TCPAddr, error) {
 	trackerURL, err := buildTrackerURL(url, infoHash, peerId, port)
 	if err != nil {
 		return nil, err
@@ -53,33 +74,39 @@ func requestPeersFromHTTPTracker(url *url.URL, infoHash [20]byte, peerId [20]byt
 		return nil, fmt.Errorf("Tracker responded with non-200 status code: %d", resp.StatusCode)
 	}
 
-	peersResponse, _, err := bencode.Decode(body)
-	if err != nil {
-		return nil, err
+	var compactResp compactHttpTrackerResp
+	err = bencode.Decode(body, &compactResp)
+	peerAddr := []net.TCPAddr{}
+	if err == nil {
+		// The tracker can respond with a list of peers in two formats:
+		// 1. A compact string of the format x.x.x.x:x, where each peer is represented by 6 bytes (4 for IP and 2 for port)
+		// 2. A list of dictionaries, where each dictionary contains the keys "ip" and "port"
+
+		for i := 0; i < len(compactResp.Peers); i += 6 {
+			ip := net.IP(compactResp.Peers[i : i+4])
+			port := binary.BigEndian.Uint16([]byte(compactResp.Peers[i+4 : i+6]))
+
+			peerAddr = append(peerAddr, net.TCPAddr{
+				IP:   ip,
+				Port: int(port),
+			})
+		}
+	} else {
+		var normalResp normalHttpTrackerResp
+		err = bencode.Decode(body, &normalResp)
+		if err != nil {
+			return nil, fmt.Errorf("Error decoding tracker response: %v", err)
+		}
+
+		for _, peer := range normalResp.Peers {
+			peerAddr = append(peerAddr, net.TCPAddr{
+				IP:   net.ParseIP(peer.Ip),
+				Port: peer.Port,
+			})
+		}
 	}
 
-	peersMap := peersResponse.(map[string]interface{})
-
-	if peersMap["failure reason"] != nil {
-		return nil, fmt.Errorf("Tracker response error: %s", peersMap["failure reason"])
-	}
-
-	unparsedPeerIPs := []byte(peersMap["peers"].(string))
-
-	parsedPeerIPs := []string{}
-
-	// Convert the byte array of peer ips into a string of the format x.x.x.x:x
-	for i := 0; i < len(unparsedPeerIPs); i += 6 {
-		// The first 4 bytes are the ip
-		ip := net.IP(unparsedPeerIPs[i : i+4]).String()
-
-		// The last 2 bytes make the port
-		port := strconv.Itoa(int(binary.BigEndian.Uint16(unparsedPeerIPs[i+4 : i+6])))
-
-		parsedPeerIPs = append(parsedPeerIPs, ip+":"+port)
-	}
-
-	return parsedPeerIPs, nil
+	return peerAddr, nil
 }
 
 func buildTrackerURL(url *url.URL, hash [20]byte, peerId [20]byte, port int) (string, error) {

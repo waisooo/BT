@@ -20,7 +20,7 @@ func Encode(v interface{}) ([]byte, error) {
 	case map[string]interface{}:
 		return encodeDictionary(v.(map[string]interface{}))
 	default:
-		return []byte{}, fmt.Errorf("Invalid type: %v", t)
+		return nil, fmt.Errorf("Invalid type: %v", t)
 	}
 
 }

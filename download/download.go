@@ -2,6 +2,7 @@ package download
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"sync"
 
@@ -27,8 +28,7 @@ func DownloadFile(torrentFilePath string) {
 
 	peerId := peer.GeneratePeerId()
 
-	// Default to 30 second interval, will be updated with actual interval from tracker response
-	peerIps := []string{}
+	peerIps := []net.TCPAddr{}
 	var wg sync.WaitGroup
 	var mut sync.Mutex
 
@@ -36,24 +36,18 @@ func DownloadFile(torrentFilePath string) {
 	for _, trackerUrl := range tf.AnnounceList {
 		go func() {
 			defer wg.Done()
-			ips, err := tracker.RequestPeers(trackerUrl, tf.InfoHash, peerId, port)
+			addr, err := tracker.RequestPeers(trackerUrl, tf.InfoHash, peerId, port)
 			if err != nil {
-				fmt.Printf("Error: Failed to request peers from tracker %s: %s\n", trackerUrl, err)
 				return
 			}
 
 			mut.Lock()
-			peerIps = append(peerIps, ips...)
+			peerIps = append(peerIps, addr...)
 			mut.Unlock()
 		}()
 	}
 
 	wg.Wait()
-
-	if len(peerIps) == 0 {
-		fmt.Println("No peers found from any tracker")
-		os.Exit(1)
-	}
 
 	peerIps = peer.RemoveDuplicatePeers(peerIps)
 
@@ -63,7 +57,6 @@ func DownloadFile(torrentFilePath string) {
 	wg.Add(len(peerIps))
 	for _, ip := range peerIps {
 		go func() {
-
 			defer wg.Done()
 			client, err := peer.NewPeerClient(ip, tf.InfoHash, peerId, (len(tf.PiecesHash)/8)+1)
 			if err != nil {
@@ -77,6 +70,11 @@ func DownloadFile(torrentFilePath string) {
 	}
 
 	wg.Wait()
+
+	if len(peers.Peers) == 0 {
+		fmt.Println("Error: No peers available for download")
+		os.Exit(1)
+	}
 
 	peers.DownloadFromPeers(tf, peerId)
 }

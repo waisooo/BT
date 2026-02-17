@@ -4,9 +4,27 @@ import (
 	"crypto/sha1"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/anthony/BT/bencode"
 )
+
+type bencodeInfo struct {
+	Pieces      string `mapstructure:"pieces"`
+	PieceLength int    `mapstructure:"piece length"`
+	Name        string `mapstructure:"name"`
+	Length      int    `mapstructure:"length"`
+	Files       []struct {
+		Length int      `mapstructure:"length"`
+		Path   []string `mapstructure:"path"`
+	} `mapstructure:"files"`
+}
+
+type bencodeTorrent struct {
+	Announce     string      `mapstructure:"announce"`
+	AnnounceList [][]string  `mapstructure:"announce-list"`
+	Info         bencodeInfo `mapstructure:"info"`
+}
 
 type TorrentFile struct {
 	AnnounceList []string
@@ -21,6 +39,12 @@ type InfoDict struct {
 	PieceLength int
 	Pieces      string
 	Length      int
+	Files       []FileDict
+}
+
+type FileDict struct {
+	Length int
+	Path   string
 }
 
 func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
@@ -29,52 +53,46 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 		return nil, err
 	}
 
-	contents, _, err := bencode.Decode(file)
+	var bcodedTorrent bencodeTorrent
+	err = bencode.Decode(file, &bcodedTorrent)
 	if err != nil {
 		return nil, err
 	}
 
-	fileDict, ok := contents.(map[string]interface{})
-	if !ok {
-		panic("Error casting contents of file")
-	}
+	infoHash := calculateHash(bcodedTorrent.Info)
 
-	infoHash := calculateHash(fileDict["info"])
-
+	bcodedInfo := bcodedTorrent.Info
 	infoDict := InfoDict{}
-	if val, ok := fileDict["info"].(map[string]interface{}); ok {
-		if name, ok := val["name"].(string); ok {
-			infoDict.Name = name
-		}
 
-		if pieceLength, ok := val["piece length"].(int); ok {
-			infoDict.PieceLength = pieceLength
-		}
+	infoDict.Name = bcodedInfo.Name
+	infoDict.PieceLength = bcodedInfo.PieceLength
+	infoDict.Pieces = bcodedInfo.Pieces
 
-		if pieces, ok := val["pieces"].(string); ok {
-			infoDict.Pieces = pieces
+	if len(bcodedInfo.Files) > 0 {
+		for _, file := range bcodedInfo.Files {
+			path := strings.Join(file.Path, "/")
+			infoDict.Files = append(infoDict.Files, FileDict{
+				Length: file.Length,
+				Path:   path,
+			})
 		}
-
-		if length, ok := val["length"].(int); ok {
-			infoDict.Length = length
-		}
+	} else {
+		infoDict.Length = bcodedInfo.Length
 	}
 
 	// If the announce-list key exists, the list of trackers is stored there
-	annouceList := []string{}
-	if list, ok := fileDict["announce-list"].([]interface{}); ok {
-		for _, trackers := range list {
-			annouceList = append(annouceList, trackers.([]string)...)
-		}
+	var announceList []string
+	for _, tracker := range bcodedTorrent.AnnounceList {
+		announceList = append(announceList, tracker...)
 	}
 
 	// Only `announce` if `announce list` is not present
-	if len(annouceList) == 0 {
-		annouceList = append(annouceList, fileDict["announce"].(string))
+	if len(announceList) == 0 {
+		announceList = append(announceList, bcodedTorrent.Announce)
 	}
 
 	torrent := TorrentFile{
-		AnnounceList: annouceList,
+		AnnounceList: announceList,
 		InfoHash:     infoHash,
 		Info:         infoDict,
 		Interval:     1800,
@@ -104,8 +122,27 @@ func CalculatePiecesHash(torrentFile *TorrentFile) error {
 
 // ////////////////////////////// Helper Functions /////////////////////////////////
 
-func calculateHash(data interface{}) [20]byte {
-	encodedInfo, err := bencode.Encode(data)
+func calculateHash(data bencodeInfo) [20]byte {
+	dataMap := map[string]interface{}{
+		"name":         data.Name,
+		"piece length": data.PieceLength,
+		"pieces":       data.Pieces,
+	}
+
+	if len(data.Files) > 0 {
+		var files []map[string]interface{}
+		for _, file := range data.Files {
+			files = append(files, map[string]interface{}{
+				"length": file.Length,
+				"path":   file.Path,
+			})
+		}
+		dataMap["files"] = files
+	} else {
+		dataMap["length"] = data.Length
+	}
+
+	encodedInfo, err := bencode.Encode(dataMap)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

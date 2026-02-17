@@ -17,7 +17,7 @@ func TestValidIntDecode(t *testing.T) {
 		expectedInt := expected[1]
 		encodedInt := []byte(i)
 
-		val, index, err := Decode(encodedInt)
+		val, index, err := doDecode(encodedInt)
 
 		if err != nil {
 			t.Errorf("Error decoding %s.\n%v", encodedInt, err)
@@ -42,7 +42,7 @@ func TestInvalidIntDecode(t *testing.T) {
 	}
 
 	for _, encodedInt := range invalidInts {
-		_, _, err := Decode(encodedInt)
+		_, _, err := doDecode(encodedInt)
 
 		if err == nil {
 			t.Errorf("Expected error decoding invalid int %s, but got none", encodedInt)
@@ -62,7 +62,7 @@ func TestValidStringDecode(t *testing.T) {
 		expectedString := expected[1].(string)
 		encodedString := []byte(i)
 
-		val, index, err := Decode(encodedString)
+		val, index, err := doDecode(encodedString)
 
 		if err != nil {
 			t.Errorf("Error decoding %s.\n%v", encodedString, err)
@@ -95,7 +95,7 @@ func TestInvalidStringDecode(t *testing.T) {
 	}
 
 	for _, encodedString := range invalidStrings {
-		_, _, err := Decode(encodedString)
+		_, _, err := doDecode(encodedString)
 		if err == nil {
 			t.Errorf("Expected error decoding invalid string %s, but got none", encodedString)
 		}
@@ -119,7 +119,7 @@ func TestValidListDecode(t *testing.T) {
 		expectedList := expected[1]
 		encodedList := []byte(i)
 
-		val, index, err := Decode(encodedList)
+		val, index, err := doDecode(encodedList)
 
 		if err != nil {
 			t.Errorf("Error decoding %s.\n%v", encodedList, err)
@@ -143,7 +143,7 @@ func TestInvalidListDecode(t *testing.T) {
 	}
 
 	for _, encodedList := range invalidLists {
-		_, _, err := Decode(encodedList)
+		_, _, err := doDecode(encodedList)
 		if err == nil {
 			t.Errorf("Expected error decoding invalid list %s, but got none", encodedList)
 		}
@@ -165,7 +165,7 @@ func TestValidDictionaryDecode(t *testing.T) {
 		expectedDict := expected[1]
 		encodedDict := []byte(i)
 
-		val, index, err := Decode(encodedDict)
+		val, index, err := doDecode(encodedDict)
 
 		if err != nil {
 			t.Errorf("Error decoding %s.\n%v", encodedDict, err)
@@ -190,7 +190,7 @@ func TestInvalidDictionaryDecode(t *testing.T) {
 	}
 
 	for _, encodedDict := range invalidDicts {
-		_, _, err := Decode(encodedDict)
+		_, _, err := doDecode(encodedDict)
 		if err == nil {
 			t.Errorf("Expected error decoding invalid dict %s, but got none", encodedDict)
 		}
@@ -198,7 +198,7 @@ func TestInvalidDictionaryDecode(t *testing.T) {
 }
 
 func TestInvalidDecodeFormat(t *testing.T) {
-	_, _, err := Decode([]byte("x4:spam"))
+	_, _, err := doDecode([]byte("x4:spam"))
 	if err == nil {
 		t.Errorf("Expected error encoding invalid value x4:spam, but got none")
 	}
