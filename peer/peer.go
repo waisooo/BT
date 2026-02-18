@@ -1,11 +1,11 @@
 package peer
 
 import (
-	"crypto/rand"
 	"fmt"
 	"io"
-	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/anthony/BT/message"
@@ -17,6 +17,8 @@ type Peers struct {
 	Peers []*message.Client
 }
 
+// DownloadFromPeers takes in a torrent file and peer id and attempts to download all the pieces of the file
+// from available peers. Upon downloading all the pieces, it reconstructs the original file and writes it to disk.
 func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 	// Initialise worker queue and file data channel
 	workerQueue := make(chan piece.PieceWork, len(tf.PiecesHash))
@@ -64,7 +66,7 @@ func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 		workerQueue <- piece
 	}
 
-	// Combine piece and write to file
+	// Combine pieces into final file data as they are downloaded
 	finalData := make([]byte, tf.Info.Length)
 	for i := 0; i < len(tf.PiecesHash); i++ {
 		result := <-results
@@ -75,8 +77,36 @@ func (p *Peers) DownloadFromPeers(tf *torrent.TorrentFile, peerId [20]byte) {
 
 	close(workerQueue)
 
+	// Determine whether the file to be downloaded is a single file or multiple files and write to disk
+	if len(tf.Info.Files) == 0 {
+		err := os.WriteFile(tf.Info.Name, finalData, 0644)
+		if err != nil {
+			fmt.Printf("Error: Failed to write file to disk, %s\n", err)
+			os.Exit(1)
+		}
+	} else {
+		index := 0
+		for _, path := range tf.Info.Files {
+			dir := filepath.Dir(path.Path)
+			err := os.MkdirAll(dir, 0755)
+			if err != nil {
+				fmt.Printf("Error: Failed to create directory, %s\n", err)
+				os.Exit(1)
+			}
+
+			err = os.WriteFile(path.Path, finalData[index:path.Length], 0644)
+			if err != nil {
+				fmt.Printf("Error: Failed to write file to disk, %s\n", err)
+				os.Exit(1)
+			}
+
+			index += path.Length
+		}
+	}
+
 }
 
+// RemoveDuplicatePeers takes in a list of peers and returns a new list with duplicate peers removed.
 func RemoveDuplicatePeers(peers []net.TCPAddr) []net.TCPAddr {
 	peerSet := make(map[string]bool)
 	uniquePeers := []net.TCPAddr{}
@@ -91,6 +121,10 @@ func RemoveDuplicatePeers(peers []net.TCPAddr) []net.TCPAddr {
 	return uniquePeers
 }
 
+// HandShakePeer performs the BitTorrent handshake with a peer as specified by the BitTorrent protocol.
+// It sends a handshake message to the peer and waits for a response.
+//
+// If the handshake is successful, it returns nil. Otherwise, it returns an error.
 func HandShakePeer(conn net.Conn, infoHash [20]byte, peerId [20]byte) error {
 	// Create handshake message
 	message := make([]byte, 68)
@@ -117,16 +151,10 @@ func HandShakePeer(conn net.Conn, infoHash [20]byte, peerId [20]byte) error {
 	return nil
 }
 
-func GeneratePeerId() [20]byte {
-	var peerId [20]byte
-	_, err := rand.Read(peerId[:])
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return peerId
-}
-
+// NewPeerClient attempts to establish a connection with the peer, perform the BitTorrent handshake, and
+// recieve the initial bitfield message from the peer if it is sent.
+//
+// If the handshake is successful, it returns a new Client representing the peer. Otherwise, it returns an error.
 func NewPeerClient(addr net.TCPAddr, hash [20]byte, peerId [20]byte, bitfieldLength int) (*message.Client, error) {
 	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
 	if err != nil {
