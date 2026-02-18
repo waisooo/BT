@@ -1,6 +1,7 @@
 package download
 
 import (
+	"crypto/rand"
 	"fmt"
 	"net"
 	"os"
@@ -11,8 +12,7 @@ import (
 	"github.com/anthony/BT/tracker"
 )
 
-const port = 6881
-
+// DownloadFile takes in the path to a torrent file and downloads the file(s) specified in the torrent file.
 func DownloadFile(torrentFilePath string) {
 	tf, err := torrent.ExtractTorrentInfo(torrentFilePath)
 	if err != nil {
@@ -26,7 +26,9 @@ func DownloadFile(torrentFilePath string) {
 		os.Exit(1)
 	}
 
-	peerId := peer.GeneratePeerId()
+	var peerId [20]byte
+	rand.Read(peerId[:])
+	const port = 6881
 
 	peerIps := []net.TCPAddr{}
 	var wg sync.WaitGroup
@@ -51,7 +53,6 @@ func DownloadFile(torrentFilePath string) {
 
 	peerIps = peer.RemoveDuplicatePeers(peerIps)
 
-	// Connect to all the peers and start downloading pieces
 	var peers peer.Peers
 
 	wg.Add(len(peerIps))
@@ -72,7 +73,7 @@ func DownloadFile(torrentFilePath string) {
 	wg.Wait()
 
 	if len(peers.Peers) == 0 {
-		fmt.Println("Error: No peers available for download")
+		fmt.Println("No peers available for download")
 		os.Exit(1)
 	}
 

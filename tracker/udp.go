@@ -9,10 +9,14 @@ import (
 	"time"
 )
 
+// These constants are based on the specification in BEP 15:
 const protocolId uint64 = 0x41727101980
 const connectAction uint32 = 0
 const announceAction uint32 = 1
 
+// requestPeersFromUDPTracker attempts to extract a list of peers from the given UDP tracker url
+//
+// It returns a list of peer IP addresses and ports if the request is successful. Otherwise it returns an error.
 func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte, port int) ([]net.TCPAddr, error) {
 	udpAddr, err := net.ResolveUDPAddr(url.Scheme, url.Host)
 	if err != nil {
@@ -69,6 +73,8 @@ func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte
 		return nil, err
 	}
 
+	// The size of the response can vary depending on the number of peers returned by the tracker,
+	// so we use a large buffer and then trim it down after reading.
 	resp := make([]byte, 4096)
 	n, err := conn.Read(resp)
 	if err != nil {
@@ -78,6 +84,7 @@ func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte
 
 	resp = resp[:n]
 
+	// The format of the announce response message is specified in the BEP 15:
 	interval := binary.BigEndian.Uint32(resp[0:4])
 	leechers := binary.BigEndian.Uint32(resp[4:8])
 	seeders := binary.BigEndian.Uint32(resp[8:12])
@@ -86,6 +93,7 @@ func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte
 
 	peerIPs := []net.TCPAddr{}
 
+	// The rest of the response is a list of peers, where each peer is represented by 6 bytes (4 for IP and 2 for port)
 	for i := 12; i < len(resp); i += 6 {
 		ip := net.IP(resp[i : i+4]).String()
 		port := int(binary.BigEndian.Uint16(resp[i+4 : i+6]))
@@ -99,6 +107,9 @@ func requestPeersFromUDPTracker(url *url.URL, infoHash [20]byte, peerId [20]byte
 	return peerIPs, nil
 }
 
+// generateTransactionId generates a random transaction ID for use in UDP tracker requests.
+//
+// It returns the generated transaction ID as a uint32, or an error if there is an issue generating the ID.
 func generateTransactionId() (uint32, error) {
 	var transactionId uint32
 	err := binary.Read(rand.Reader, binary.BigEndian, &transactionId)
@@ -109,6 +120,9 @@ func generateTransactionId() (uint32, error) {
 	return transactionId, nil
 }
 
+// parseUDPResponse parses the response from the UDP tracker and checks that an action and transaction ID exist and match the expected values.
+//
+// It returns the payload of the response (i.e. the part after the first 8 bytes) if the response is valid, or an error if there is an issue with the response.
 func parseUDPResponse(resp []byte, wantedAction uint32, wantedTransactionId uint32) ([]byte, error) {
 	if len(resp) < 8 {
 		return nil, fmt.Errorf("Invalid response from UDP tracker: too short")
@@ -128,6 +142,9 @@ func parseUDPResponse(resp []byte, wantedAction uint32, wantedTransactionId uint
 	return resp[8:], nil
 }
 
+// initiateUDPHandshake performs the initial handshake with the UDP tracker as specified in the BEP 15.
+//
+// If the handshake is successful, it returns the connection ID provided by the tracker. Otherwise, it returns an error.
 func initiateUDPHandshake(conn *net.UDPConn) (uint64, error) {
 	// Generate a random transaction ID
 	transactionId, err := generateTransactionId()
@@ -135,15 +152,17 @@ func initiateUDPHandshake(conn *net.UDPConn) (uint64, error) {
 		return 0, err
 	}
 
-	// Send connection request
+	// Construct the handshake message to be sent to the tracker
 	msg := make([]byte, 16)
 	binary.BigEndian.PutUint64(msg[0:8], uint64(protocolId))     // Protocol ID
 	binary.BigEndian.PutUint32(msg[8:12], uint32(connectAction)) // Action (connect)
 	binary.BigEndian.PutUint32(msg[12:16], transactionId)        // Transaction ID
 
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) // Set a read deadline to avoid hanging indefinitely
+	// Set a read deadline to avoid hanging indefinitely
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	defer conn.SetDeadline(time.Time{})
 
+	// Send the handshake message to the tracker
 	_, err = conn.Write(msg)
 	if err != nil {
 		return 0, err
@@ -155,6 +174,7 @@ func initiateUDPHandshake(conn *net.UDPConn) (uint64, error) {
 		return 0, err
 	}
 
+	// The response to the handshake should be 16 bytes long, containing the action, transaction ID, and connection ID
 	if n != 16 {
 		return 0, fmt.Errorf("Invalid response length from UDP tracker: expected 16 bytes, got %d", n)
 	}

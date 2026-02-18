@@ -6,7 +6,7 @@ import (
 	"net"
 )
 
-// Message ids for peer communication
+// Message ids for peer communication as specified in the bitTorrent protocol specification. (BEP_3)
 const (
 	Choke         = 0
 	Unchoke       = 1
@@ -30,6 +30,8 @@ type Client struct {
 	Bitfield []byte
 	Choked   bool
 }
+
+// Methods for sending messages with the specific message ids and payloads as specified in the BitTorrent protocol specification.
 
 func (c *Client) SendHave(pieceIndex int) {
 	payload := make([]byte, 4)
@@ -63,6 +65,9 @@ func (c *Client) SendRequest(index int, begin int, length int) {
 	sendMessage(c.Conn, &Message{Id: Request, Payload: payload})
 }
 
+// Recieve a message from the peer and if successful,
+// return a struct containing the message id and payload,
+// otherwise return any error encountered.
 func RecieveMessage(conn net.Conn) (*Message, error) {
 	lengthBuf := make([]byte, 4)
 	_, err := conn.Read(lengthBuf)
@@ -75,7 +80,7 @@ func RecieveMessage(conn net.Conn) (*Message, error) {
 
 	// Keep-alive message
 	if msgLen == 0 {
-		return &Message{}, nil
+		return nil, nil
 	}
 
 	// Message ID
@@ -100,15 +105,24 @@ func RecieveMessage(conn net.Conn) (*Message, error) {
 	return &peerMsg, nil
 }
 
+///////////////////////////// Helper functions /////////////////////////////
+
+// Helper function to send a message to the peer with the specified message id and payload.
 func sendMessage(conn net.Conn, msg *Message) {
 	buf := make([]byte, 4)
 
+	// Keep-alive message
 	if msg == nil {
 		binary.BigEndian.PutUint32(buf, 0)
 		conn.Write(buf)
 		return
 	}
 
+	// Construct payload that contains:
+	// - 4 byte for message length
+	// - 1 byte for message id
+	// - payload of variable length
+	// As specified in the BitTorrent protocol specification (BEP_3)
 	binary.BigEndian.PutUint32(buf, uint32(1+len(msg.Payload)))
 	conn.Write(buf)
 	conn.Write([]byte{msg.Id})
