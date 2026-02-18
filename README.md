@@ -2,7 +2,14 @@
 
 This project is a basic implementation of a bitTorrent client from scratch in Go.
 
-# Project Structure
+## Supports
+
+- Original Specification ([BEP0003])
+  - Multi-file .torrent files
+  - Orignal and Compact Peer List formats ([BEP0023][])
+  - UDP trackers ([BEP0015][])
+
+## Project Structure
 
 - `bitTorrent/main.go`: Application entry point
 - `bitTorrent/bencode/`
@@ -15,7 +22,7 @@ This project is a basic implementation of a bitTorrent client from scratch in Go
 - `bitTorrent/messages`
   - `bitTorrent/messages/messages.go`: Handles requests to send/recieve peer messages
 - `bitTorrent/peers`:
-  - `bitTorrent/peers/peers.go`: Implements peer related functionality including peer discovery, handshakes, initialising piece download and peer ID generation
+  - `bitTorrent/peers/peers.go`: Implements peer related functionality including peer discovery, handshakes and initialising piece download
 - `bitTorrent/pieces`
   - `bitTorrent/pieces/piece.go`: Implements piece related functionality including downloading blocks, validating pieces and piece state management
 - `bittorrent/test`
@@ -25,3 +32,12 @@ This project is a basic implementation of a bitTorrent client from scratch in Go
   - `bittorrent/test/test_small_download.sh`: Bash script that runs the client with `small_download.torrent` and verifies the SHA-256 checksum
 - `bitTorrent/torrent`
   - `bitTorrent/torrent/torrent.go`: Handles extracting metadata from a `.torrent` file
+- `bitTorrent/tracker`
+  - `bitTorrent/tracker/http.go`: Contains the logic for extracting peers from HTTP tracker
+  - `bitTorrent/tracker/tracker.go`: Defines the tracker interface and abstracts peer retrieval logic
+  - `bitTorrent/tracker/udp.go`: Contains the logic for extracting peers from UDP tracker
+
+<!-- Reference links -->
+[BEP0003]: https://bittorrent.org/beps/bep_0003.html 'Original bittorrent specification'
+[BEP0023]: http://bittorrent.org/beps/bep_0023.html 'Compact Peer List specification'
+[BEP0015]: https://www.bittorrent.org/beps/bep_0015.html 'UDP Tracker Protocol specification'
