@@ -158,18 +158,18 @@ func initiateUDPHandshake(conn *net.UDPConn) (uint64, error) {
 	binary.BigEndian.PutUint32(msg[8:12], uint32(connectAction)) // Action (connect)
 	binary.BigEndian.PutUint32(msg[12:16], transactionId)        // Transaction ID
 
-	// Set a read deadline to avoid hanging indefinitely
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	defer conn.SetDeadline(time.Time{})
-
 	// Send the handshake message to the tracker
 	_, err = conn.Write(msg)
 	if err != nil {
 		return 0, err
 	}
 
+	// Set a read deadline to avoid hanging indefinitely
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer conn.SetDeadline(time.Time{})
+
 	resp := make([]byte, 16)
-	n, _, _, _, err := conn.ReadMsgUDP(resp, nil)
+	n, err := conn.Read(resp)
 	if err != nil {
 		return 0, err
 	}

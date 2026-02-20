@@ -27,6 +27,7 @@ type bencodeTorrent struct {
 }
 
 type TorrentFile struct {
+	Name         string
 	AnnounceList []string
 	InfoHash     [20]byte
 	PiecesHash   [][20]byte
@@ -47,19 +48,21 @@ type FileDict struct {
 	Path   string
 }
 
-func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
+// extractTorrentInfo takes in the path to a torrent file and extracts
+// the metadata from the torrent file, returning a TorrentFile struct.
+func extractTorrentInfo(filePath string) (TorrentFile, error) {
 	file, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, err
+		return TorrentFile{}, err
 	}
 
 	var bcodedTorrent bencodeTorrent
 	err = bencode.Decode(file, &bcodedTorrent)
 	if err != nil {
-		return nil, err
+		return TorrentFile{}, err
 	}
 
-	infoHash := calculateHash(bcodedTorrent.Info)
+	infoHash := calculateInfoHash(bcodedTorrent.Info)
 
 	bcodedInfo := bcodedTorrent.Info
 	infoDict := InfoDict{}
@@ -68,6 +71,8 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 	infoDict.PieceLength = bcodedInfo.PieceLength
 	infoDict.Pieces = bcodedInfo.Pieces
 
+	// If the file key exists, the torrent file is a multi-file torrent, and the list of files is stored there
+	// Otherwise, the torrent file is a single-file torrent, and the length of the file is stored in the length key
 	if len(bcodedInfo.Files) > 0 {
 		for _, file := range bcodedInfo.Files {
 			path := strings.Join(file.Path, "/")
@@ -92,17 +97,25 @@ func ExtractTorrentInfo(filePath string) (*TorrentFile, error) {
 	}
 
 	torrent := TorrentFile{
+		Name:         infoDict.Name,
 		AnnounceList: announceList,
 		InfoHash:     infoHash,
 		Info:         infoDict,
 		Interval:     1800,
 	}
 
-	return &torrent, nil
+	err = torrent.CalculatePiecesHash()
+	if err != nil {
+		return TorrentFile{}, err
+	}
+
+	return torrent, nil
 }
 
-func CalculatePiecesHash(torrentFile *TorrentFile) error {
-	infoMap := torrentFile.Info
+// CalculatePiecesHash takes in a TorrentFile struct and calculates the pieces hash
+// for the torrent file, storing the pieces hash in the TorrentFile struct.
+func (tf *TorrentFile) CalculatePiecesHash() error {
+	infoMap := tf.Info
 	const hashLen = 20
 
 	if len(infoMap.Pieces)%hashLen != 0 {
@@ -115,14 +128,16 @@ func CalculatePiecesHash(torrentFile *TorrentFile) error {
 		copy(pieceHashes[i][:], piece)
 	}
 
-	torrentFile.PiecesHash = pieceHashes
+	tf.PiecesHash = pieceHashes
 
 	return nil
 }
 
-// ////////////////////////////// Helper Functions /////////////////////////////////
+//////////////////////////////// Helper Functions /////////////////////////////////
 
-func calculateHash(data bencodeInfo) [20]byte {
+// calculateInfoHash takes in the bencoded info struct calculates the SHA-1 hash
+// of the bencoded info dictionary, returning the hash as a byte array.
+func calculateInfoHash(data bencodeInfo) [20]byte {
 	dataMap := map[string]interface{}{
 		"name":         data.Name,
 		"piece length": data.PieceLength,

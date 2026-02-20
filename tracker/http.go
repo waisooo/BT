@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/anthony/BT/bencode"
 )
@@ -45,6 +46,7 @@ func requestPeersFromHTTPTracker(url *url.URL, infoHash [20]byte, peerId [20]byt
 		return nil, err
 	}
 
+	http.DefaultClient.Timeout = 10 * time.Second
 	resp, err := http.Get(trackerURL)
 	if err != nil {
 		return nil, err

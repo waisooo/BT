@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"time"
 
@@ -45,12 +44,13 @@ func TryDownloadPiece(client *message.Client, pw PieceWork) ([]byte, error) {
 	state := PieceProgress{
 		Client:    client,
 		BlockData: make([]byte, pw.PieceSize),
+		Index:     pw.Index,
 	}
 
 	// Send an interested message to the peer to indicate that we want to download pieces from it
 	client.SendInterested()
 
-	if client.Choked {
+	if client.IsChoked {
 		client.SendUnchoke()
 	}
 
@@ -64,30 +64,42 @@ func TryDownloadPiece(client *message.Client, pw PieceWork) ([]byte, error) {
 
 	for state.Downloaded < pw.PieceSize {
 		// Fill the pipeline with requests, up to the maximum allowed
-		for !client.Choked && state.Backlog < MaxPipelineRequests && state.Requested < pw.PieceSize {
+		for !client.IsChoked && state.Backlog < MaxPipelineRequests && state.Requested < pw.PieceSize {
 			if pw.PieceSize-state.Requested < blockSize {
 				blockSize = pw.PieceSize - state.Requested
 			}
 
-			client.SendRequest(pw.Index, state.Requested, blockSize)
+			client.SendRequestBlock(pw.Index, state.Requested, blockSize)
 
 			state.Requested += blockSize
 			state.Backlog++
 		}
 
-		if client.Choked {
+		if client.IsChoked {
 			client.SendUnchoke()
 		}
 
-		err := readMessage(client, &state)
+		resp, err := client.RecieveMessage()
 		if err != nil {
-			// Sometimes the client may send a piece with the incorrect index.
-			// In this case, we can ignore the piece and request it again later
-			if err.Error() == "Index not matching" {
+			return nil, err
+		}
+
+		if resp.Id == message.Piece {
+			index := binary.BigEndian.Uint32(resp.Payload[0:4])
+			begin := binary.BigEndian.Uint32(resp.Payload[4:8])
+
+			// Check that the piece index in the message matches the expected piece index for this download
+			if int(index) != state.Index {
 				continue
 			}
 
-			return nil, err
+			// Append the received block to the piece's block data
+			n := copy(state.BlockData[begin:], resp.Payload[8:])
+
+			state.Downloaded += n
+			if n != 0 {
+				state.Backlog--
+			}
 		}
 	}
 
@@ -105,47 +117,6 @@ func TryDownloadPiece(client *message.Client, pw PieceWork) ([]byte, error) {
 
 /////////////////////////////// Helper Functions /////////////////////////////////
 
-// readMessage reads a message from the peer client, and updates the state of the client and piece download progress accordingly.
-//
-// It returns an error if there is an issue reading the message or if the message is invalid.
-func readMessage(client *message.Client, state *PieceProgress) error {
-	msg, err := message.RecieveMessage(client.Conn)
-
-	if err != nil {
-		return err
-	}
-
-	switch msg.Id {
-	case message.Choke:
-		state.Client.Choked = true
-	case message.Unchoke:
-		state.Client.Choked = false
-	case message.Bitfield:
-		state.Client.Bitfield = msg.Payload
-	case message.Have:
-		pieceIndex := binary.BigEndian.Uint32(msg.Payload[0:4])
-		setPiece(state.Client.Bitfield, int(pieceIndex))
-	case message.Piece:
-		index := binary.BigEndian.Uint32(msg.Payload[0:4])
-		begin := binary.BigEndian.Uint32(msg.Payload[4:8])
-
-		// Check that the piece index in the message matches the expected piece index for this download
-		if int(index) != state.Index {
-			return errors.New("Index not matching")
-		}
-
-		// Append the received block to the piece's block data
-		n := copy(state.BlockData[begin:], msg.Payload[8:])
-
-		state.Downloaded += n
-		if n != 0 {
-			state.Backlog--
-		}
-	}
-
-	return nil
-}
-
 // hasPiece checks if the peer has the specified piece based on the peer's bitfield.
 func hasPiece(bf []byte, index int) bool {
 	if bf == nil {
@@ -156,13 +127,4 @@ func hasPiece(bf []byte, index int) bool {
 	bitIndex := index % 8
 
 	return bf[byteIndex]&(1<<(7-bitIndex)) != 0
-}
-
-// setPiece sets the bit corresponding to the specified piece index in the
-// given bitfield to indicate that they have that piece.
-func setPiece(bf []byte, index int) {
-	byteIndex := index / 8
-	bitIndex := index % 8
-
-	bf[byteIndex] |= 1 << (7 - bitIndex)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/anthony/BT/peer"
@@ -13,16 +14,10 @@ import (
 )
 
 // DownloadFile takes in the path to a torrent file and downloads the file(s) specified in the torrent file.
-func DownloadFile(torrentFilePath string) {
-	tf, err := torrent.ExtractTorrentInfo(torrentFilePath)
+func DownloadFile(source string) {
+	tf, err := torrent.ExtractInfo(source)
 	if err != nil {
 		fmt.Printf("Error: Failed to extract torrent file metadata, %s\n", err)
-		os.Exit(1)
-	}
-
-	err = torrent.CalculatePiecesHash(tf)
-	if err != nil {
-		fmt.Printf("Error: Failed to calculate pieces hash, %s\n", err)
 		os.Exit(1)
 	}
 
@@ -34,6 +29,7 @@ func DownloadFile(torrentFilePath string) {
 	var wg sync.WaitGroup
 	var mut sync.Mutex
 
+	// Request peers from all trackers in the announce list
 	wg.Add(len(tf.AnnounceList))
 	for _, trackerUrl := range tf.AnnounceList {
 		go func() {
@@ -55,11 +51,12 @@ func DownloadFile(torrentFilePath string) {
 
 	var peers peer.Peers
 
+	// Attempt to establish a connection with each peer
 	wg.Add(len(peerIps))
 	for _, ip := range peerIps {
 		go func() {
 			defer wg.Done()
-			client, err := peer.NewPeerClient(ip, tf.InfoHash, peerId, (len(tf.PiecesHash)/8)+1)
+			client, err := peer.NewPeerClient(ip, tf, peerId)
 			if err != nil {
 				return
 			}
@@ -76,6 +73,21 @@ func DownloadFile(torrentFilePath string) {
 		fmt.Println("No peers available for download")
 		os.Exit(1)
 	}
+
+	// If the torrent file is a magnet link, we need to request the metadata for the torrent file
+	// from the peers before we can download the file(s) specified in the torrent file.
+	if strings.HasPrefix(source, "magnet") {
+		for _, client := range peers.Peers {
+			metadata, err := client.RequestMetadata(tf.InfoHash)
+			if err != nil {
+				fmt.Printf("Error requesting metadata from peer %s: %s\n", client.Ip, err)
+			}
+
+			tf.Info.Pieces += string(metadata)
+		}
+	}
+
+	tf.CalculatePiecesHash()
 
 	peers.DownloadFromPeers(tf, peerId)
 }
