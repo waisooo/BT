@@ -2,7 +2,6 @@ package bencode
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 
 	"github.com/mitchellh/mapstructure"
@@ -188,11 +187,6 @@ func decodeDictionary(data []byte) (map[string]interface{}, int, error) {
 
 	if end == 0 {
 		return decodedMap, 0, missingTerminatorError("dictionary")
-	}
-
-	// Checking if keys not sorted
-	if !slices.IsSorted(keys) {
-		return decodedMap, 0, fmt.Errorf("Error: Keys are not sorted in ascending order")
 	}
 
 	return decodedMap, next + 1, nil

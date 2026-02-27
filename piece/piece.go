@@ -84,6 +84,11 @@ func TryDownloadPiece(client *message.Client, pw PieceWork) ([]byte, error) {
 			return nil, err
 		}
 
+		// Keep alive message is receieved, continue to wait for the next message
+		if resp == nil {
+			continue
+		}
+
 		if resp.Id == message.Piece {
 			index := binary.BigEndian.Uint32(resp.Payload[0:4])
 			begin := binary.BigEndian.Uint32(resp.Payload[4:8])

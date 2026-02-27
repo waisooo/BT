@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -24,7 +25,10 @@ func (p *Peers) DownloadFromPeers(tf torrent.TorrentFile, peerId [20]byte) {
 	workerQueue := make(chan piece.PieceWork, len(tf.PiecesHash))
 	results := make(chan piece.PieceResult)
 
-	fmt.Println("Starting download")
+	fmt.Println("////////////////////////////////////////////")
+	fmt.Println("//////       Starting download        //////")
+	fmt.Println("////////////////////////////////////////////")
+
 	fmt.Println("There are", len(p.Peers), "peers available for download")
 
 	// Start download workers for each peer
@@ -159,10 +163,13 @@ func handshakePeer(client *message.Client, infoHash [20]byte, peerId [20]byte) e
 	// The reserved bytes are used to indicate support for extensions to the BitTorrent protocol.
 	// Currently, we support only:
 	// - Extended handshake (BEP_10) which allows us to request metadata from peers when dowloading from a magnet link.
+	// - DHT (BEP_5) which allows us to discover peers without the need for a tracker.
 	client.SupportsExtension = true
+	client.SupportsDHT = true
 
 	extensionBytes := make([]byte, 8)
 	extensionBytes[5] |= 0x10
+	extensionBytes[7] |= 0x01
 
 	copy(msg[20:28], extensionBytes) // Reserved bytes
 	copy(msg[28:48], infoHash[:])    // Info hash
@@ -192,26 +199,40 @@ func handshakePeer(client *message.Client, infoHash [20]byte, peerId [20]byte) e
 	}
 
 	// Continously read messages from the peer since clients send bitfield messages and other messages in random order after the handshake.
-	if client.SupportsExtension {
-		err = client.ExtendedPeerHandshake()
+	for i := 0; i < 50; i++ {
+		resp, err := client.RecieveMessage()
 		if err != nil {
-			return fmt.Errorf("Error performing extended handshake: %w", err)
+			break
+		}
+
+		switch resp.Id {
+		case message.Bitfield:
+			client.Bitfield = resp.Payload
+		case message.Extension:
+			if client.SupportsExtension {
+				err = client.ExtendedPeerHandshake(resp.Payload)
+				if err != nil {
+					return fmt.Errorf("Error performing extended peer handshake: %w", err)
+				}
+			}
+		case message.DHT:
+			if client.SupportsDHT {
+				client.DHT.Port = int(binary.BigEndian.Uint16(resp.Payload))
+			}
 		}
 	}
 
+	// Error checking to ensure the peer sent the expected messages after the handshake.
 	if len(client.Bitfield) == 0 {
-		resp, err := client.RecieveMessage()
-		if err != nil {
-			return fmt.Errorf("Error reading message from peer: %w", err)
-		}
+		return fmt.Errorf("Peer did not send bitfield message after handshake")
+	}
 
-		if resp.Id == message.Bitfield {
-			client.Bitfield = resp.Payload
-		}
+	if client.SupportsExtension && client.MetadataExtension.MetadataSize == 0 {
+		return fmt.Errorf("Peer did not send valid extension handshake message after handshake")
+	}
 
-		if len(client.Bitfield) == 0 {
-			return fmt.Errorf("Peer did not send bitfield message")
-		}
+	if client.SupportsDHT && client.DHT.Port == 0 {
+		return fmt.Errorf("Peer did not send DHT port in handshake response")
 	}
 
 	return nil

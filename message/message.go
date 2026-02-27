@@ -19,7 +19,8 @@ const (
 	Request       = 6
 	Piece         = 7
 	Cancel        = 8
-	Extension     = 20 // Extended message id as specified in BEP_10
+	Extension     = 20   // Extended message id as specified in BEP_10
+	DHT           = 0x09 // DHT message id
 )
 
 type Message struct {
@@ -36,6 +37,10 @@ type Client struct {
 	MetadataExtension struct {
 		MessageID    int
 		MetadataSize int
+	}
+	SupportsDHT bool
+	DHT         struct {
+		Port int
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"github.com/anthony/BT/bencode"
 )
 
+// Metadata exchange extension related code as specified in BEP_10
 const (
 	metdataRequest   = 0
 	metadataResponse = 1
@@ -26,35 +27,16 @@ type metadataMessage struct {
 	TotalSize   int `mapstructure:"total_size"`
 }
 
-func (c *Client) ExtendedPeerHandshake() error {
-	// Read response from peer
-	resp, err := c.RecieveMessage()
-	if err != nil {
-		return err
-	}
-
-	messageId := resp.Id
-	for i := 0; i < 50 && messageId != Extension; i++ {
-		resp, err = c.RecieveMessage()
-		messageId = resp.Id
-		if err != nil {
-			return err
-		}
-	}
-
-	if messageId != Extension {
-		return fmt.Errorf("Extension message was not sent")
-	}
-
+func (c *Client) ExtendedPeerHandshake(payload []byte) error {
 	// Check if the peer supports the extension handshake
-	extMsgId := resp.Payload[0]
-	payload := resp.Payload[1:]
+	extMsgId := payload[0]
+	payload = payload[1:]
 	if extMsgId != 0 {
 		return fmt.Errorf("Peer does not support the extension handshake")
 	}
 
 	var extHandshakeMsg extensionMessage
-	err = bencode.Decode(payload, &extHandshakeMsg)
+	err := bencode.Decode(payload, &extHandshakeMsg)
 	if err != nil {
 		return fmt.Errorf("Error decoding extension handshake message: %w", err)
 	}
