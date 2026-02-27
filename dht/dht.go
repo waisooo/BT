@@ -86,11 +86,6 @@ func lookupPeers(selfID string, infoHash [20]byte, initial []compactNode) []net.
 			break
 		}
 
-		// If we found 50 peers, we can stop as 50 peers is a good number to have for downloading
-		if len(foundPeers) >= 50 {
-			break
-		}
-
 		results := make(chan dhtResult, len(batch))
 		var wg sync.WaitGroup
 
@@ -126,22 +121,23 @@ func lookupPeers(selfID string, infoHash [20]byte, initial []compactNode) []net.
 
 		for res := range results {
 			foundPeers = append(foundPeers, res.Peers...)
-			shortlist = append(shortlist, res.Nodes...)
+			sortByDistance(res.Nodes, infoHash)
+			shortlist = append(shortlist, pickAlphaCandidates(res.Nodes, queried)...)
 		}
 
-		var unique []compactNode
-		for _, n := range shortlist {
-			if !queried[n.id] {
-				unique = append(unique, n)
+		// Check if the first 8 closest nodes have been queried, if so we can stop
+		if len(shortlist) >= K {
+			allQueried := true
+			for i := 0; i < K; i++ {
+				if !queried[shortlist[i].id] {
+					allQueried = false
+					break
+				}
 			}
-		}
 
-		shortlist = unique
-		sortByDistance(shortlist, infoHash)
-
-		// Limit the shortlist to the K closest nodes to prevent it from growing too large
-		if len(shortlist) > MaxNodes {
-			shortlist = shortlist[:MaxNodes]
+			if allQueried {
+				break
+			}
 		}
 	}
 

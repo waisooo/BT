@@ -68,7 +68,9 @@ func DownloadFile(source string) {
 				continue
 			}
 
+			// Break at the first instance of a successful DHT request to avoid making multiple DHT requests
 			extraPeers = append(extraPeers, addrs...)
+			break
 		}
 	}
 	peers.Peers = append(peers.Peers, requestPeers(extraPeers, tf, peerId).Peers...)
